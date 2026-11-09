@@ -8,13 +8,7 @@ async (page) => {
   const picker = () => page.getByRole('button', {name: '优先跳过的精英怪', exact: true});
   const search = () => page.getByRole('textbox', {name: '搜索精英', exact: true});
   const allNames = ['陪葬旗官','教团刽子手','大祭司','行走圣髑匣','锚持者','溺亡的宰相','堡垒甲虫','皇家收割者','石棺守卫','黑曜石刽子手','永冻守卫','霜之刽子手','嫁接师','砧木','首席屠夫','胆汁斟酒官','面孔缝纫师','模具搬运工','工头之屋','钟楼','葬礼潜行者','破冰兽'];
-  const save = async () => {
-    const request = page.waitForResponse(r => r.url().endsWith('/api/config') && r.request().method() === 'POST');
-    await page.getByRole('button', {name: '保存参数', exact: true}).click();
-    const response = await request;
-    if (!response.ok()) throw Error(await response.text());
-    await page.waitForFunction(() => [...document.querySelectorAll('button')].find(b => b.textContent === '保存参数')?.disabled);
-  };
+  const save = async () => {await page.locator('.autosave-status.saved').first().waitFor({timeout:15000});};
   await page.keyboard.press('Escape');
   await page.setViewportSize({width:1440,height:1000});
   await page.getByRole('button', {name:'策略参数', exact:true}).click();
@@ -51,8 +45,7 @@ async (page) => {
   await page.getByRole('checkbox', {name:'破冰兽',exact:true}).check();
   await page.keyboard.press('Escape');
   await page.route('**/api/config', route => route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({ok:false,error:'测试参数保存失败，请重试。'})}));
-  await page.getByRole('button', {name:'保存参数',exact:true}).click();
-  await page.getByRole('alert').filter({hasText:'测试参数保存失败，请重试。'}).waitFor();
+  await page.locator('.autosave-status.error').waitFor();
   assert(await page.locator('.elite-selected').innerText() === '陪葬旗官、破冰兽', '保存失败保留多选草稿并显示错误');
   await page.unroute('**/api/config');
   await save();
@@ -93,5 +86,5 @@ async (page) => {
   await page.evaluate(() => window.scrollTo(0,0));
   await page.screenshot({path:'output/playwright/strategy/settings-desktop-dark.png',animations:'disabled'});
   assert(errors.length === 0,'浏览器无未处理异常');
-  return {ok:true,checks,metrics,errors};
+  console.log('ELITE_CHECKS '+JSON.stringify({ok:true,checks,metrics,errors}));return {ok:true,checks,metrics,errors};
 }

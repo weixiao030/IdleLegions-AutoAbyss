@@ -24,6 +24,9 @@ static class StrategyTests
         int P(JsonNode c, string method = "sima.reliquia") => Cards.Priority(c, cfg, run, method);
         check(Cards.Priority(glacier, cfg) > Cards.Priority(core, cfg), "真实传说冻结加五次弹跳优先于普通冻结核心");
         check(P(glacier) > P(shield), "已有普通核心仍优先升级传说冻结弹跳核心");
+        run["reliquias"]!.AsArray().Add(lightning.DeepClone());
+        check(P(glacier)>P(shield),"已有普通冻结加电系五次弹跳，仍可升级传说冻结核心");
+        run["reliquias"]!.AsArray().RemoveAt(1);
         check(P(shield) > P(slow), "已有核心先补一张可保留开局护盾");
         check(P(slow) > P(vsSlow) && P(vsSlow) > P(crit) && P(poison) > P(crit), "构筑先减速、减速增伤和异常增伤，双暴仅为补充");
         check(P(fireDamage) > P(crit) && P(lightning) > P(crit), "火系纯状态增伤与电系弹跳不再被家族回避误伤");
@@ -31,7 +34,7 @@ static class StrategyTests
         check(Math.Abs(Effects.Parse([Card("po_entumecer", "ponzona", "Tus golpes dejan al objetivo un 10% más lento durante 3 s")], cfg).Slow - .1) < 1e-8, "识别真实更慢百分比描述");
         check(Effects.Parse([shield], cfg).Shield == .25 && Effects.Parse([Card("au6_vigilia", "aurora", "Escudo del 5% los 3 primeros segundos de cada sala")], cfg).Shield == .05, "晨昏普通及徽章开局护盾描述均可解析");
         run["reliquias"]!.AsArray().Add(shield.DeepClone());
-        check(P(shield) < P(poison) && P(shield) < P(crit), "已有可保留护盾后不重复优先抢继承名额");
+        check(P(shield) > P(poison) && P(shield) > P(crit), "已有护盾仍可继续优先叠加高级开局盾");
         run["reliquias"] = new JsonArray(core.DeepClone());
         run["blasones"] = new JsonArray(shield.DeepClone());
         check(P(shield) > P(slow), "本层护盾徽章不能冒充可继承护盾");
@@ -41,11 +44,11 @@ static class StrategyTests
         check(Effects.Parse([mark, deepen], cfg) is { Mark: > 0, MarkDeepen: > 0, MarkCap: 4 }, "标记来源、加深和上限进入组合模型");
         var burn = Card("br_yesca", "brasa", "Tus autoataques dejan al objetivo ARDIENDO");
         var detonate = Card("br_detonador", "brasa", "Tus autoataques CONSUMEN el estado del objetivo y fuerzan su reacción");
-        check(P(burn) < 0 && P(detonate) < 0 && P(fireDamage) > 0, "只降低实际破坏冻结的附魔或状态消耗，不屏蔽整个火家族");
+        check(!Cards.Rate(burn,cfg).Allowed && P(detonate) < 0 && P(fireDamage) > 0, "普攻点燃硬禁，明确消耗状态仍降序，火家族纯伤害允许");
         run["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(shield.DeepClone()) };
         check(P(shield, "sima.guarda") > P(poison, "sima.guarda"), "继承时已有核心而尚无继承盾，优先补一张盾");
         run["guardaPendiente"]!["cartas"]![0]!["llevas"] = 1;
-        check(P(shield, "sima.guarda") < P(poison, "sima.guarda"), "旧护盾llevas计数参与继承去重");
+        check(P(shield, "sima.guarda") > P(poison, "sima.guarda"), "已有继承盾仍优先继续继承高级盾");
 
         check(cfg.AvoidEliteIds.Length == 0 && EliteRules.Catalog.Length == 22, "精英多选默认空名单，清单包含22种已核对精英");
         var allElites = new Settings { AvoidEliteIds = EliteRules.Catalog.Select(e => e.Id).ToArray() }; allElites.Validate();
@@ -75,6 +78,36 @@ static class StrategyTests
             avoid.AllowElite = false; pilot.Save(avoid);
             check(pilot.Build(snap).Single().Reason.Contains("陪葬旗官"), "关闭精英路线后的必经fallback仍保留避让评分而不停止");
             check(new Pilot().Config.AvoidEliteIds.SequenceEqual(["sg_alferez"]), "精英多选写入磁盘并能重新加载");
+            var unrestricted = new Settings { Simulations=100001, DelayMs=-50, MaxRuns=2001, StartDepth=-12, StopDepth=1, ReserveRopes=101, PactFloors=2001, RewardFloors=-3, ClearFloors=5001, CoreRewardWeight=51, ShardRewardWeight=-40, FreezeDuration=10, RetreatHp=-.3, MinWinRate=1.4, RiskAversion=-2, ModelUncertainty=2, EnemyStrength=-1, FreezeWeight=30 };
+            pilot.Save(unrestricted);
+            var loaded = new Pilot().Config;
+            check(loaded.Simulations==100001 && loaded.DelayMs==-50 && loaded.CoreRewardWeight==51 && loaded.MinWinRate==1.4 && loaded.StartDepth==-12, "超出旧上下限的整数、比例与权重原样写入并重新加载");
+            bool nonfinite=false; try { new Settings { RiskAversion=double.NaN }.Validate(); } catch { nonfinite=true; }
+            check(nonfinite && new Settings().DelayMs==1000, "仍拒绝非有限数字，操作间隔默认1000毫秒");
+            check(LoopPolicy.Configure(cfg,new("count",10001)).MaxRuns==10001 && LoopPolicy.Stop(LoopPolicy.Configure(cfg,new("count",-2)),0,10)!=null, "次数循环没有1000上限，负次数不新入场");
+            pilot.Save(new Settings { PreferFreezeBuild=false, AvoidFireLightning=false });
+            var prohibited=new[]{"br_yesca","br_incendio","fu_descarga","fu_tormenta"}.Select(id=>Card(id,"","")).ToArray();
+            var described=Card("future_electric","fulgor","Tus autos ELECTRIFICAN y pegas +5% a lo que lleve un estado");
+            var localized=Card("future_burn","brasa",""); localized["descZh"]="普攻使敌人燃烧";
+            foreach(var method in new[]{"sima.reliquia","sima.blason","sima.guarda"})
+            {
+                var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,new JsonObject());
+                check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"硬性排除普攻点燃带电，关闭偏好开关仍有效，电系弹跳允许");
+            }
+            bool noUnsafeFallback=false; try {pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());} catch(Exception e){noUnsafeFallback=e.Message.Contains("全部");}
+            check(noUnsafeFallback,"只有禁牌时明确暂停，不以fallback选中禁牌");
+            var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_carambano"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
+            store["sima"]!["run"]!["tienda"]!["buffs"]=new JsonArray(prohibited.Append(described).Append(shield).Select(c=>c.DeepClone()).ToArray());
+            pilot.Save(cfg);
+            var shop=pilot.Build(store).Where(c=>c.Method=="sima.trade").ToArray();
+            check(shop.Length==1 && shop[0].Card.At("id").S()=="au_alba","生产商店入口过滤禁牌且允许第二张高级盾");
+            var inherited=JsonNode.Parse("""{"reliquias":[{"id":"es_carambano"}],"guardaPendiente":{"cartas":[{"id":"au_alba","llevas":1}]}}""")!;
+            check(Pilot.Rank(pilot.CardChoices([core,shield,crit],"sima.guarda",inherited))[0].Card.At("id").S()=="au_alba","已继承一个冻结核心后优先高级盾，不重复冻结");
+            var temporary=JsonNode.Parse("""{"blasones":[{"id":"es2_carambano"}],"reliquias":[],"guardaPendiente":{"cartas":[{"id":"es_carambano","llevas":0},{"id":"au_alba","llevas":0}]}}""")!;
+            check(Pilot.Rank(pilot.CardChoices([shield,core],"sima.guarda",temporary))[0].Core,"临时冻结徽章不替代必须继承的首个冻结核心");
+            var zeroChoice=new Choice("不抽样路线","sima.move",new(),risk:10);
+            new Simulation(false).Evaluate([zeroChoice],new JsonObject(),new Settings{Simulations=0},CancellationToken.None);
+            check(zeroChoice.Forecast==null && Pilot.Rank([zeroChoice,new Choice("安全路线","sima.move",new())])[0].Label=="安全路线","非正推演次数不除零、不伪造胜率，仍按路线风险排序");
         }
         finally { Paths.Data = originalData; if (Directory.Exists(temp)) Directory.Delete(temp, true); }
 

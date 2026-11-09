@@ -10,7 +10,6 @@ static class LoopPolicy
     {
         var cfg = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(original, J.Options), J.Options)!;
         if (request.Mode is not ("single" or "count" or "ropes")) throw new Exception("未知循环模式。");
-        if (request.Mode == "count" && (request.Count < 1 || request.Count > 1000)) throw new Exception("循环次数须为 1～1000 的整数。");
         cfg.LoopUntilRopesEmpty = request.Mode == "ropes";
         cfg.MaxRuns = request.Mode == "count" ? request.Count : 1;
         cfg.AutoEnter = true;

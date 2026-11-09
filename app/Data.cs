@@ -46,7 +46,7 @@ sealed class Settings
 {
     public int Simulations { get; set; } = 4096;
     public int Seed { get; set; } = 73129;
-    public int DelayMs { get; set; } = 2200;
+    public int DelayMs { get; set; } = 1000;
     public int StartDepth { get; set; } = 0;
     public int StopDepth { get; set; } = 0;
     public int MaxRuns { get; set; } = 1;
@@ -71,6 +71,7 @@ sealed class Settings
     public double FreezeDuration { get; set; } = 1.0;
     public int PactFloors { get; set; } = 7;
     public bool AvoidFireLightning { get; set; } = true;
+    public bool LightningConsumesFreeze { get; set; } = false;
     public bool AutoEnter { get; set; } = true;
     public bool AllowElite { get; set; } = true;
     public string[] AvoidEliteIds { get; set; } = [];
@@ -82,15 +83,12 @@ sealed class Settings
     public static bool ValidFormation(string[]? f) => FormationRules.Valid(f);
     public void Validate()
     {
-        if (Simulations < 2000 || Simulations > 50000 || DelayMs < 1000 || DelayMs > 60000 || MaxRuns < 1 || MaxRuns > 1000 || StartDepth < 0 || StopDepth < 0 || StopDepth > 0 && StopDepth <= StartDepth || StopDepth > 1000 || ReserveRopes < 0 || ReserveRopes > 100) throw new Exception("参数超出范围：推演 2000～50000 次，间隔 1000～60000 毫秒。停止深度 0 表示不限。");
         if (AvoidEliteIds == null || AvoidEliteIds.Length > EliteRules.Catalog.Length || AvoidEliteIds.Any(id => id == null || !EliteRules.Catalog.Any(e => e.Id == id)) || AvoidEliteIds.Distinct().Count() != AvoidEliteIds.Length) throw new Exception("精英避让名单无效，请从列表中选择不同精英；可留空。");
         if (!ValidFormation(Formation)) throw new Exception("请选择 4 个不同职业，按前排到后排排列。");
-        if (PactFloors < 0 || PactFloors > 1000) throw new Exception("契约层数须为 0～1000，0 表示关闭。前 7 层指 P0～P6。");
-        if (RewardFloors < 0 || RewardFloors > 1000 || !double.IsFinite(CoreRewardWeight) || CoreRewardWeight < 0 || CoreRewardWeight > 30 || !double.IsFinite(ShardRewardWeight) || ShardRewardWeight < 0 || ShardRewardWeight > 30) throw new Exception("奖励阶段层数须为 0～1000，核心及碎屑权重须为 0～30。");
-        if (!double.IsFinite(FreezeDuration) || FreezeDuration < .2 || FreezeDuration > 5) throw new Exception("模型冻结时长假设须为 0.2～5 秒。");
-        if (ClearFloors < 0 || ClearFloors > 1000) throw new Exception("通关层数须为 0～1000，0 表示连续下潜。");
-        foreach (var x in new[] { RetreatHp, MinWinRate, RiskAversion, ModelUncertainty }) if (!double.IsFinite(x) || x < 0 || x > 1) throw new Exception("比例参数须在 0～1 之间。");
-        if (!double.IsFinite(EnemyStrength) || EnemyStrength < .1 || EnemyStrength > 10 || !double.IsFinite(FreezeWeight) || FreezeWeight < 0 || FreezeWeight > 10) throw new Exception("敌人强度须为 0.1～10，冻结权重须为 0～10。");
+        // No product-imposed ranges. Integer representation and finite numeric
+        // values are still required by the configuration format.
+        foreach (var x in new[] { RetreatHp, MinWinRate, RiskAversion, ModelUncertainty, EnemyStrength, FreezeWeight, CoreRewardWeight, ShardRewardWeight, FreezeDuration })
+            if (!double.IsFinite(x)) throw new Exception("参数必须是有限数值。");
     }
 }
 

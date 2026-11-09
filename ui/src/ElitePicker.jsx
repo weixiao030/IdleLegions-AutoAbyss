@@ -20,7 +20,7 @@ export default function ElitePicker({value = [], onChange, disabled}) {
           {groups.map(group => <fieldset key={group}><legend>{group}</legend>{visible.filter(e => e.group === group).map(e => <label className="elite-option" key={e.id}><Checkbox aria-label={e.name} disabled={disabled} checked={selected.includes(e.id)} onCheckedChange={checked => onChange(checked ? [...selected, e.id] : selected.filter(id => id !== e.id))}/><span>{e.name}</span></label>)}</fieldset>)}
           {!visible.length && <p className="elite-empty">没有匹配的精英，试试其他名称。</p>}
         </div>
-        <p className="elite-menu-note">共 {elites.length} 种，含伏击精英。关闭后点击“保存参数”生效。</p>
+        <p className="elite-menu-note">共 {elites.length} 种，含伏击精英。更改会自动保存。</p>
       </Popover.Content>
     </Popover.Root>
     {selected.length > 0 && <p className="elite-selected" aria-live="polite">{elites.filter(e => selected.includes(e.id)).map(e => e.name).join('、')}</p>}

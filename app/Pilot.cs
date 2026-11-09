@@ -98,7 +98,7 @@ sealed class Pilot
                     await operation.WaitAsync(ct);
                     try { await Step(preview, ct); } finally { operation.Release(); }
                     if (preview) break;
-                    await Task.Delay(Config.DelayMs, ct);
+                    if (Config.DelayMs > 0) await Task.Delay(Config.DelayMs, ct);
                 } while (true);
             }
             catch (OperationCanceledException) { phase = "已暂停"; message = "当前操作已结束，可继续已有深渊。"; Note("自动流程已暂停"); }
@@ -158,6 +158,8 @@ sealed class Pilot
         if (preview) { phase = "推演完成"; message = "建议：" + pick.Label + "。未执行游戏操作。"; Note(message); return; }
         var fighting = pick.Method is "sima.fight" or "sima.open";
         var movingIntoFight = pick.Method == "sima.move" && run.At("mapa", "nodos", pick.Args.At("nodoId").S(), "tipo").S() is "combate" or "elite" or "jefe";
+        if ((fighting || movingIntoFight) && pick.Forecast == null && Config.MinWinRate > 0)
+            throw new Exception("抽样已关闭，无法验证最低胜率暂停线；请调整模拟次数或关闭此暂停线后继续。");
         if ((fighting || movingIntoFight) && pick.Forecast is { } f && f.Low < Config.MinWinRate)
         {
             throw new Exception($"预测胜率下界 {f.Low:P0} 低于自定义阈值，已暂停并保留深渊进度。撤离已禁止。");
@@ -273,9 +275,7 @@ sealed class Pilot
             foreach (var card in run.At("tienda", "buffs").A())
             {
                 var bid = "buff:" + card.At("id").S(); var rated = Cards.Rate(card, Config);
-                // One carryable opening shield is enough for this build.
-                if (Config.PreferFreezeBuild && Effects.Parse([card], Config).Shield > 0 && Effects.Parse(run.At("reliquias").A(), Config).Shield > 0) continue;
-                if (rated.Value < 0 || bought.Contains(id + ":" + bid) || completed.Contains(run.At("id").S() + ":" + id + ":" + bid)) continue;
+                if (!rated.Allowed || rated.Value < 0 || bought.Contains(id + ":" + bid) || completed.Contains(run.At("id").S() + ":" + id + ":" + bid)) continue;
                 shop.Add(new("商店：" + J.Name(card), "sima.trade", new() { ["oferta"] = bid }, rated.Value, 0, rated.Core, Cards.Priority(card, Config, run, "sima.trade"), card) { Reason = Cards.Reason(card, Config, run, "sima.trade") });
             }
             if (shop.Count > 0) { foreach (var dest in run.At("destinos").A()) shop.Add(RouteChoice(run, dest.S(), Config, s)); return shop.ToArray(); }
@@ -331,13 +331,14 @@ sealed class Pilot
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
+        cards = cards.Where(c => Cards.Rate(c, Config).Allowed).ToArray();
         // A fully inherited stack grants no additional effect. Prefer any card
         // that can still add a stack; keep a legal fallback when all are capped.
         if (method == "sima.guarda" && cards.Any(c => c.At("llevas").N() < 3))
             cards = cards.Where(c => c.At("llevas").N() < 3).ToArray();
         var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择徽章：" : "选择遗物：";
         var choices = cards.Select(c => (Card: c, Rating: Cards.Rate(c, Config))).Where(x => x.Rating.Allowed).Select(x => new Choice((x.Rating.Core ? "普攻冻结核心：" : action) + J.Name(x.Card), method, new() { ["id"] = x.Card.At("id").S() }, x.Rating.Value, x.Rating.Value < 0 ? 1 : 0, x.Rating.Core, Cards.Priority(x.Card, Config, run, method), x.Card) { Reason = Cards.Reason(x.Card, Config, run, method) }).ToArray();
-        if (choices.Length == 0) throw new Exception("没有符合遗物偏好的选项，请在游戏中选择后继续。");
+        if (choices.Length == 0) throw new Exception("当前选项全部是禁止的普攻点燃/带电牌，已暂停，不会自动选择；请在游戏中处理后继续。");
         return choices;
     }
     internal static Choice[] BeforeShopExit(Choice[] candidates, Forecast? baseline)
@@ -385,7 +386,7 @@ sealed class Pilot
             Reason = avoided.Length == 0 ? "" : "优先避让：" + string.Join("、", avoided.Select(e => e.Name)) + "；必经或明显更安全时仍可前进"
         };
     }
-    internal static Choice[] Rank(Choice[] candidates) => candidates.OrderByDescending(c => c.Priority).ThenByDescending(c => c.Forecast?.Score ?? c.Benefit).ToArray();
+    internal static Choice[] Rank(Choice[] candidates) => candidates.OrderByDescending(c => c.Priority).ThenByDescending(c => c.Forecast?.Score ?? c.Benefit * 6 - c.Risk * 3).ToArray();
     internal static bool ShouldPact(JsonNode run, Settings cfg) => cfg.AutoPactWithFreeze && cfg.PactFloors > 0
         && run.At("profundidad").N() < cfg.PactFloors && run.At("pacto") is JsonObject
         && !run.At("pacto", "sellado").B()
@@ -459,7 +460,7 @@ sealed class Pilot
         text.AppendLine($"结算资源净变化：核心 {finalCores-initialCores:+0;-0;0}，碎屑 {finalShards-initialShards:+0;-0;0}。暂存战利品与实际结算资源分开统计。\n");
         text.AppendLine($"最高到达深度：{maxDepth}；击败层首领：{clearedFloors}；本段战斗：{wins} 胜 / {losses} 负；普攻冻结核心：{(coreAcquired ? "已取得" : "本段未取得")}。\n");
         if (predictionErrors.Count > 0) text.AppendLine($"本段预测 Brier 分数：{predictionErrors.Average():F4}（越低越好，样本 {predictionErrors.Count} 场）。这只衡量这批已选动作，不能验证未选动作的反事实胜率。\n");
-        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。已有可保留核心后优先暴击/暴伤，再伤害与弹跳，同级比较模拟收益。火雷造成的冻结消耗计入模型，技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执，超时不自动重试。\n");
+        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。已有一个可继承冻结核心后可升级传说五次弹跳，并叠加高级开局盾、减速和异常增伤。普攻点燃与普攻带电硬禁。纯电伤清除冻结假设：{Config.LightningConsumesFreeze}（默认关闭，尚未确认服务端规则）。技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执，超时不自动重试。\n");
         text.AppendLine($"奖励路线：有冻结核心且处于前 {Config.RewardFloors} 层时优先战斗，核心资源权重 {Config.CoreRewardWeight}、碎屑权重 {Config.ShardRewardWeight}；之后优先避战：{Config.AvoidCombatAfterRewardFloors}。必经战斗继续执行。\n");
         text.AppendLine("本地预测基于客户端事件与未知属性先验，不是服务端精确战斗模拟。抽样置信区间不包含模型误差，不能宣称全局最高真实胜率。\n");
         text.AppendLine($"循环模式：{(Config.LoopUntilRopesEmpty ? "直到绳索用完（保留0）" : $"循环{Config.MaxRuns}次")}；已完成 {runs} 次。\n");

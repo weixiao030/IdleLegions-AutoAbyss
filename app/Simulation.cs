@@ -126,8 +126,9 @@ sealed class Simulation
     internal static double SharpenPotential(JsonNode? hero) => Skills(hero).Sum(k => k.Mult * (k.Aoe ? 2 : 1) / k.Cooldown);
     public void Evaluate(Choice[] choices, JsonNode s, Settings cfg, CancellationToken ct)
     {
-        // This method is also used by the offline evaluator; enforce the minimum.
-        if (cfg.Simulations < 2000) throw new Exception("每候选至少需要 2000 次模拟。");
+        // Zero/negative trials explicitly disable sampling, never invent a win
+        // probability or silently substitute a different configured count.
+        if (cfg.Simulations <= 0) { foreach (var c in choices) c.Forecast = null; return; }
         var run = s.At("sima", "run")!;
         var members = run.At("heroes").A().Where(h => !h.At("caido").B()).ToArray();
         if (members.Length == 0) members = s.At("heroes").A().Take(4).ToArray();
@@ -275,7 +276,10 @@ sealed class Simulation
                         if(debuffTo[e]>now)d*=1.4;
                         if(markTo[e]>now && marks[e]>0) d*=1+marks[e]*(fx.Mark+fx.MarkDeepen)+fx.VsMarked;
                         if(fx.ConsumesStatus && frozenTo[e]>now) frozenTo[e]=0;
-                        if(frozenTo[e]>now&&element is "fire" or "lightning") {d*=(element=="fire"?2:1.3)*(1+fx.ReactionDamage);frozenTo[e]=0;if(element=="lightning")debuffTo[e]=now+6;}
+                        // Direct fire skills and burn damage over time are different.
+                        // Fire-family passives never imply fire attacks; lightning
+                        // consumption remains an exposed uncertain assumption.
+                        if(frozenTo[e]>now && (element=="fire" || element=="lightning" && cfg.LightningConsumesFreeze)) {d*=(element=="fire"?2:1.3)*(1+fx.ReactionDamage);frozenTo[e]=0;if(element=="lightning")debuffTo[e]=now+6;}
                         eh[e]-=d;hp[hero]=Math.Min(maxHp[hero]*(1+fx.Life)/(1+current.Life),hp[hero]+d*fx.Leech+healRate[hero]*interval[hero]/(1+fx.Speed));
                         if(basic&&fx.Freeze||element=="ice")frozenTo[e]=Math.Max(frozenTo[e],now+freezeSecs);
                         if(basic && fx.Mark>0) { marks[e]=Math.Min(Math.Max(1,fx.MarkCap),markTo[e]>now?marks[e]+1:1); markTo[e]=now+10; }
@@ -294,9 +298,11 @@ sealed class Simulation
             double center=(p+z*z/(2*cfg.Simulations))/denom,margin=z*Math.Sqrt((p*(1-p)+z*z/(4*cfg.Simulations))/cfg.Simulations)/denom;
             double avg=rem/cfg.Simulations,coverage=frozenSum/cfg.Simulations;
             double searchBonus=!current.Freeze&&c.Card!=null&&Cards.Family(c.Card)=="escarcha"?cfg.FreezeWeight:0;
-            double conflict=cfg.AvoidFireLightning&&(fx.Burn||fx.Lightning||fx.ConsumesStatus)?cfg.FreezeWeight*(1-coverage):0;
+            double conflict=cfg.AvoidFireLightning&&fx.ConsumesStatus?cfg.FreezeWeight*(1-coverage):0;
             c.Forecast=new(p,Math.Max(0,center-margin),Math.Min(1,center+margin),avg,
                 p*100+avg*cfg.RiskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/cfg.Simulations))+coverage*cfg.FreezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,cfg.Simulations,coverage,totalTime/cfg.Simulations,known,fx.Unknown.Distinct().ToArray());
         });
+        if (choices.Any(c => c.Forecast is { } f && new[] { f.Win, f.Low, f.High, f.Hp, f.Score, f.Frozen, f.Duration }.Any(x => !double.IsFinite(x))))
+            throw new Exception("当前参数导致模型无法产生有限结果，已暂停；请调整参数后继续。配置未被截断。");
     }
 }

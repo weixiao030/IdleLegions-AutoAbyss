@@ -93,6 +93,16 @@ static class Cards
         return new[] { "tus autoataques congelan", "tus golpes básicos congelan", "tus autos congelan", "普攻使目标冻结", "普攻会冻结", "普攻冻结敌人" }.Any(effect.Contains);
     }
     public static JsonNode[] Current(JsonNode? run) => run.At("reliquias").A().Concat(run.At("blasones").A()).Concat(run.At("buffs").A()).ToArray();
+    public static bool Forbidden(JsonNode c)
+    {
+        // IDs remain effective when the server omits descriptions. Match effects
+        // too, so future cards and badges cannot bypass the fixed build rule.
+        if (c.At("id").S() is "br_yesca" or "br_incendio" or "fu_descarga" or "fu_tormenta") return true;
+        var text = Effects.Normalize(c.At("desc").S() + " " + c.At("descZh").S() + " " + c.At("description").S()).ToLowerInvariant();
+        return Regex.IsMatch(text, @"(?:autoataques|autos|golpes).{0,100}(?:queman|encienden|ardiendo|arden|electrocutan|electrifican)")
+            || Regex.IsMatch(text, @"(?:basic attacks?|auto[ -]?attacks?)\s+(?:(?:will|now|also|can)\s+)*(?:ignite|electrif\w*|shock\b|(?:apply|inflict|cause)\w* (?:burn|shock|electri)|leave.{0,30}burning)")
+            || Regex.IsMatch(text, @"(?:普攻|普通攻击|基础攻击).{0,30}(?:点燃|燃烧|灼烧|带电|触电|通电)");
+    }
     public static JsonNode[] Inherited(JsonNode run)
     {
         // The offer list contains this floor's candidates, not all prior relics.
@@ -112,21 +122,23 @@ static class Cards
         var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);
         bool core = IsCore(c, cfg), missingCore = !baseline.Any(x => IsCore(x, cfg));
-        bool advanced = core && fx.Cleave is > 0 and <= 5;
+        bool advanced = c.At("id").S() == "es_glaciar" || core && fx.Cleave is > 0 and <= 5;
         if (missingCore && core) return (advanced ? 2200 : 2000, method == "sima.guarda"
             ? "先保留普攻冻结核心，保证下一层仍能冻结；传说冻结加五次弹跳最优"
             : "先拿可继承的普攻冻结核心；传说冻结加五次弹跳最优，本层徽章不替代它");
         if (!cfg.PreferFreezeBuild) return (0, "按模拟收益比较");
         // Only actual state-consuming attacks conflict with freeze. Family labels
         // do not disqualify fire status damage or lightning cleave.
-        if (cfg.AvoidFireLightning && (fx.Burn || fx.Lightning || fx.ConsumesStatus))
-            return (-100, "普攻会消耗冻结或触发火雷反应，降低优先级；纯增伤和弹跳不受影响");
-        if (advanced && (held.Cleave == 0 || held.Cleave > 5))
+        if (cfg.AvoidFireLightning && fx.ConsumesStatus)
+            return (-100, "明确消耗目标状态的效果降低优先级；普攻点燃与带电始终禁止");
+        if (advanced && !baseline.Any(x => x.At("id").S() == "es_glaciar" || IsCore(x, cfg) && Effects.Parse([x], cfg).Cleave is > 0 and <= 5))
             return (2100, "升级为传说普攻冻结加每五次攻击弹跳");
         string family = Family(c);
         if (missingCore && family == "escarcha") return (1000, "缺可继承冻结核心：先积累寒冷，优先减速、减速增伤和弹跳");
         if (!missingCore && fx.Shield > 0 && held.Shield == 0)
-            return (1600, "已有冻结核心：补一张开局护盾并保留到下一层，晨昏同样适用");
+            return (1600, "已有冻结核心：先补开局护盾并继承，防止进房间时暴毙");
+        if (!missingCore && fx.Shield >= .2)
+            return (1500, "继续叠加高级开局护盾并继承，覆盖冻结生效前的伤害窗口");
         int support = missingCore ? 800 : 1400;
         if (fx.Slow > held.Slow && held.Slow == 0)
             return (support, "先补减速来源，让减速增伤与冻结控制形成配合");
@@ -137,10 +149,8 @@ static class Cards
         if (fx.Cleave > 0 && (held.Cleave == 0 || fx.Cleave < held.Cleave))
             return (support - 150, "补充或加快普攻弹跳，冰毒电均可参与构筑");
         if (fx.Slow > held.Slow) return (support - 180, "提高已有减速强度");
-        // Once one carryable opening shield exists, do not spend the next
-        // inheritance slot chasing another shield ahead of useful build effects.
-        if (fx.Shield > 0 && held.Shield > 0) return (100, "已有可保留的开局护盾，优先把名额留给控制、增伤和弹跳");
-        if (core) return (200, "已有冻结核心和同等弹跳，不重复优先占用构筑名额");
+        if (fx.Shield > 0 && held.Shield > 0) return (300, "允许继续补开局盾，高级护盾优先于普通护盾");
+        if (core) return (-10, "已有可继承冻结核心，无需重复叠冻结；优先其他有效强化");
         if (family == "escarcha") return (600, "主效果未出现时优先补寒冷系列");
         if (family == "ponzona") return (550, "寒冷关键牌未出现时优先毒系补充");
         bool markSource = held.Mark > 0 || method != "sima.guarda" && run.At("heroes").A().Any(h => h.At("marca").B());
@@ -176,6 +186,6 @@ static class Cards
     {
         // Effects, survival and interactions are evaluated by the simulator.
         // Build priority is separate from combat forecasts; do not invent affinity odds.
-        return (true, 0, IsCore(c, cfg));
+        return (!Forbidden(c), 0, IsCore(c, cfg));
     }
 }

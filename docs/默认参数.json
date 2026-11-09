@@ -1,7 +1,7 @@
 {
   "simulations": 4096,
   "seed": 73129,
-  "delayMs": 2200,
+  "delayMs": 1000,
   "startDepth": 0,
   "stopDepth": 0,
   "maxRuns": 1,
@@ -38,5 +38,6 @@
   ],
   "loopUntilRopesEmpty": false,
   "preferFreezeBuild": true,
-  "avoidEliteIds": []
+  "avoidEliteIds": [],
+  "lightningConsumesFreeze": false
 }

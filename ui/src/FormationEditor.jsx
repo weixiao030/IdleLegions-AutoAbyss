@@ -1,9 +1,9 @@
 import React, {useEffect, useState} from 'react';
 import {Badge, Button, Select} from '@radix-ui/themes';
-import {ArrowDown, ArrowUp, Check, FloppyDisk} from '@phosphor-icons/react';
+import {ArrowDown, ArrowUp} from '@phosphor-icons/react';
 import {defaultFormation, names, placeProfession, positionNames, professions, validFormation} from './formation.js';
 
-export default function FormationEditor({value, saved, onChange, onSave, disabled, saving, hasRun, owned}) {
+export default function FormationEditor({value, saved, onChange, disabled, hasRun, owned}) {
   const [feedback, setFeedback] = useState('');
   const valid = validFormation(value);
   const formation = Array.isArray(value) ? value : [];
@@ -23,7 +23,7 @@ export default function FormationEditor({value, saved, onChange, onSave, disable
   }
   const missing = owned && valid ? formation.filter(id => !owned.includes(id)) : [];
   return <section className="settings-section formation-editor" aria-labelledby="formation-title">
-    <div className="formation-heading"><h2 id="formation-title">职业与站位</h2><Badge color={changed ? 'amber' : 'gray'} variant="soft">{changed ? '未保存' : '已保存'}</Badge></div>
+    <div className="formation-heading"><h2 id="formation-title">职业与站位</h2><Badge color={changed ? 'amber' : 'gray'} variant="soft">{changed ? '正在自动保存' : '已保存'}</Badge></div>
     <p className="section-desc">四个位置自由选职业，从最前到最后排列。选择已上阵职业会自动交换位置。</p>
     <div className="formation-rows">
       {['前排', '后排'].map((row, rowIndex) => <fieldset className="formation-row" key={row} disabled={disabled}>
@@ -41,8 +41,8 @@ export default function FormationEditor({value, saved, onChange, onSave, disable
     <p className="formation-preview"><strong>当前选择</strong><span>{valid ? formation.map(id => names[id]).join(' → ') : '请选择 4 个不同的职业'}</span></p>
     {!valid && <p role="alert" className="formation-error">阵容需要 4 个不同的有效职业。请重新选择，或恢复默认阵容。</p>}
     {missing.length > 0 && <p className="footnote">当前账号未拥有：{missing.map(id => names[id]).join('、')}。可以保存方案，入场前请更换为已拥有的职业。</p>}
-    <p className="footnote">{hasRun ? '当前深渊已入场，保存后将在下一次入场使用。' : '保存后，下次入场将按这个顺序组队。'}{disabled && !saving ? '请先暂停下潜，再调整站位。' : ''}</p>
+    <p className="footnote">{hasRun ? '当前深渊已入场，更改自动保存，下一次入场使用。' : '更改自动保存，下次入场将按这个顺序组队。'}{disabled ? '请先暂停下潜，再调整站位。' : ''}</p>
     <div className="formation-feedback" role="status" aria-live="polite">{feedback}</div>
-    <div className="formation-actions"><Button type="button" size="3" disabled={disabled || !valid || !changed} loading={saving} onClick={onSave}>{changed ? <FloppyDisk size={17}/> : <Check size={17}/>}保存站位</Button><Button type="button" variant="ghost" color="gray" disabled={disabled || JSON.stringify(value) === JSON.stringify(defaultFormation)} onClick={() => {onChange([...defaultFormation]); setFeedback('已恢复图二默认阵容，点击保存站位后生效。');}}>恢复默认</Button></div>
+    <div className="formation-actions"><Button type="button" variant="ghost" color="gray" disabled={disabled || JSON.stringify(value) === JSON.stringify(defaultFormation)} onClick={() => {onChange([...defaultFormation]); setFeedback('已恢复默认阵容，正在自动保存。');}}>恢复默认</Button></div>
   </section>;
 }

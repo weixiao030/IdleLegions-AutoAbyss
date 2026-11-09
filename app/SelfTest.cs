@@ -34,8 +34,7 @@ static class SelfTest
             Assert(LoopPolicy.Stop(countLoop, 2, 5) == null && LoopPolicy.Stop(countLoop, 3, 5) != null, "循环3次只在第三次结算后停止，胜败不改变次数规则");
             Assert(ropeLoop.LoopUntilRopesEmpty && ropeLoop.ReserveRopes == 0 && LoopPolicy.Stop(ropeLoop, 2000, 1) == null && LoopPolicy.Stop(ropeLoop, 2000, 0) != null, "用完模式忽略次数与旧保留量，最后一根仍可入场，0根停止");
             Assert(LoopPolicy.Stop(countLoop, 1, 2) != null && LoopPolicy.Configure(loopOriginal, new("single")).MaxRuns == 1, "次数模式尊重保留绳索，单次模式重置循环上限");
-            bool badLoop = false; try { LoopPolicy.Configure(loopOriginal, new("count", 0)); } catch { badLoop = true; }
-            Assert(badLoop, "拒绝零次循环");
+            Assert(LoopPolicy.Stop(LoopPolicy.Configure(loopOriginal,new("count",0)),0,10)!=null, "零次循环保存成功且不新入场");
             var retained = JsonNode.Parse("{\"reliquias\":[{\"id\":\"es_carambano\",\"familia\":\"escarcha\"},{\"id\":\"um_filo\"}],\"guardaPendiente\":{\"cartas\":[{\"id\":\"um_filo\",\"llevas\":0}],\"heredadas\":1}}")!;
             var critCard = JsonNode.Parse("{\"id\":\"um_filo\",\"familia\":\"umbra\",\"desc\":\"+6 puntos de crítico y +20% de daño crítico\"}")!;
             Assert(Cards.Inherited(retained).Length == 1 && Cards.IsCore(Cards.Inherited(retained)[0], cfg) && Cards.Priority(critCard, cfg, retained, "sima.guarda") == 350, "继承基线保留候选外旧核心，双暴进入补充档");
@@ -60,7 +59,7 @@ static class SelfTest
             Assert(Math.Abs(favor.Outgoing(false,false,1,true)-1.08)<.00001 && favor.Outgoing(false,false,1)==1, "实测 Rencor 商店增益只对精英与首领计入8%增伤");
             var incense = Effects.Parse([JsonNode.Parse("{\"id\":\"au_incienso\",\"desc\":\"Escudo del 4% de tu vida durante 3 s al empezar cada sala; bajo el 40% de vida, tu defensa sube un 8% y te limpias los estados\"}")!],cfg);
             Assert(Math.Abs(incense.LowAt-.4)<.0001 && Math.Abs(incense.LowDefense-.08)<.0001 && Math.Abs(incense.Shield-.04)<.0001, "实测 Incienso 的低血防御与开场盾均参与模型");
-            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，降低消耗冻结的普攻优先级");
+            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，明确消耗状态效果降序且普攻点燃带电硬禁");
             Assert(cfg.ClearFloors == 0 && cfg.StopDepth == 0 && cfg.RetreatHp == 0 && cfg.MinWinRate == 0, "默认持续下潜，不因层数、生命或预测胜率提前停止");
             Assert(cfg.SkipBattleReplay, "默认跳过战斗播放");
             Assert(cfg.Formation.SequenceEqual(new[] { "berserker", "mago", "arquera", "paladin" }), "默认使用图二：狂战士、法师、弓箭手、圣骑士");
@@ -133,7 +132,7 @@ static class SelfTest
             };
             Assert(Pilot.Rank(prioritized).Select(x => x.Label).SequenceEqual(new[] { "core", "cold", "utility" }), "缺核心时核心优先，寒冷积累优先于其他系列");
             var coreRun = JsonNode.Parse("{\"profundidad\":6,\"reliquias\":[{\"id\":\"es2_carambano\"}]}")!;
-            Assert(Cards.Priority(ice,cfg,coreRun)==200, "已有可保留核心时重复冻结按寒冷档比较");
+            Assert(Cards.Priority(ice,cfg,coreRun)==-10, "已有可保留核心时不重复优先叠冻结");
             Assert(Pilot.RewardPhase(coreRun,cfg) && cfg.RewardFloors==7, "有核心默认前七层优先核心和碎屑奖励");
             coreRun["profundidad"]=7;
             Assert(!Pilot.RewardPhase(coreRun,cfg), "P7 起退出奖励阶段并继续下潜");
@@ -144,7 +143,7 @@ static class SelfTest
             Assert(Pilot.RouteChoice(routeRun,"fight",cfg).Risk>Pilot.RouteChoice(routeRun,"safe",cfg).Risk,"P7 之后安全路线优先，必经战斗仍有合法候选");
             Assert(Pilot.RouteChoice(routeRun,"fight",new Settings{AvoidCombatAfterRewardFloors=false}).Risk<Pilot.RouteChoice(routeRun,"fight",cfg).Risk,"关闭避战开关可自定义后半程策略");
             var legacy=JsonNode.Parse("{\"guardaPendiente\":{\"cartas\":[{\"id\":\"es_carambano\",\"llevas\":1}]}}")!;
-            Assert(Cards.Priority(ice,cfg,legacy,"sima.guarda")==200 && Cards.Inherited(legacy).Length==1,"已继承核心不会被误认为下一层丢失");
+            Assert(Cards.Priority(ice,cfg,legacy,"sima.guarda")==-10 && Cards.Inherited(legacy).Length==1,"已继承核心不会被误认为下一层丢失");
             legacy["guardaPendiente"]!["cartas"]![0]!["llevas"]=0;
             Assert(Cards.Priority(ice,cfg,legacy,"sima.guarda")==2000,"尚未继承核心时带走核心优先");
             var fx=Effects.Parse(new[]{JsonNode.Parse("{\"desc\":\"+40% de daño contra lo que lleve un estado encima\"}")!,JsonNode.Parse("{\"desc\":\"+5% de velocidad de ataque\"}")!,JsonNode.Parse("{\"desc\":\"+0,6% de robo de vida\"}")!},cfg);
@@ -155,7 +154,7 @@ static class SelfTest
             bool noExtract = false;
             try { new Bridge().Send("sima.extract", new(), CancellationToken.None).GetAwaiter().GetResult(); } catch (Exception e) { noExtract = e.Message.Contains("禁止撤离"); }
             Assert(noExtract, "撤离命令在派发前被硬性拒绝");
-            var invalid = new Settings { Simulations = 0 }; bool rejected = false; try { invalid.Validate(); } catch { rejected = true; } Assert(rejected, "拒绝零次推演参数");
+            bool rejected = false; var invalid = new Settings { Simulations = 0 }; invalid.Validate(); Assert(invalid.Simulations == 0, "允许零次推演并关闭抽样");
             Assert(!new Bridge().Fresh(JsonNode.Parse("{\"time\":0}")), "拒绝过期游戏快照");
             var ipcFolder = Path.Combine(Path.GetTempPath(), "FrostAbyss-IpcTest-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(ipcFolder);
@@ -224,6 +223,14 @@ static class SelfTest
             synthetic["heroes"]![0]!["skills"]=new JsonArray();
             var noFire=new Choice("physical","sima.fight",new());local.Evaluate([noFire],synthetic,fastCfg,CancellationToken.None);
             Assert(fireSkill.Forecast!.Frozen<noFire.Forecast!.Frozen,"火技能确实消耗冻结并改变冻结覆盖率");
+            synthetic["heroes"]![0]!["skills"]=JsonNode.Parse("""[{"equipped":true,"damages":true,"cooldown":2,"desc":"100% de daño","element":"lightning","rule":{"cond":"always"}}]""");
+            var electricNo=new Choice("electric-preserve","sima.fight",new());
+            local.Evaluate([electricNo],synthetic,fastCfg,CancellationToken.None);
+            fastCfg.LightningConsumesFreeze=true;
+            var electricYes=new Choice("electric-consume","sima.fight",new());
+            local.Evaluate([electricYes],synthetic,fastCfg,CancellationToken.None);
+            Assert(electricYes.Forecast!.Frozen<electricNo.Forecast!.Frozen,"纯电伤的两种模型假设可比较，不把未验证机制写死");
+            fastCfg.LightningConsumesFreeze=false;synthetic["heroes"]![0]!["skills"]=new JsonArray();
             var inheritance = synthetic.DeepClone();
             inheritance["sima"]!["run"]!["guardaPendiente"] = JsonNode.Parse("{\"cartas\":[{\"id\":\"es_carambano\",\"llevas\":1,\"desc\":\"Tus golpes básicos congelan\"}]}");
             inheritance["sima"]!["run"]!["mapa"]!["nodos"]!["1"]!["tipo"] = "jefe";
