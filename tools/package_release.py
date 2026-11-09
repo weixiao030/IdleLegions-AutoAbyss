@@ -9,8 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / 'release'
 ARTIFACTS = ROOT / 'artifacts'
-NAME = 'IdleLegions-AutoAbyss-v1.2.0-win-x64.zip'
-PREFIX = 'IdleLegions自动下井-v1.2/'
+NAME = 'IdleLegions-AutoAbyss-v1.2.1-win-x64.zip'
+PREFIX = 'IdleLegions自动下井-v1.2.1/'
 DOCS = ['使用说明.md', '模型说明.md', '历史实测报告-v0.4.3.md',
         '发布验证-1.0.md', '发布验证-1.1.md', '发布验证-1.2.md', '第三方组件.txt', '默认参数.json',
         'dotnet-LICENSE.txt', 'dotnet-ThirdPartyNotices.txt']
