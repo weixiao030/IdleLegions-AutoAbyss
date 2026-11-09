@@ -63,6 +63,11 @@ sealed class Settings
     public bool PrepareSkills { get; set; } = false;
     public bool SkipBattleReplay { get; set; } = true;
     public bool AutoPactWithFreeze { get; set; } = true;
+    public bool SkipEightHitPact { get; set; } = true;
+    public bool SkipDodgePact { get; set; } = true;
+    public bool SkipShieldCardsEarly { get; set; } = true;
+    public int ShieldSkipFloors { get; set; } = 7;
+    public bool RetryTimeouts { get; set; } = true;
     public bool FarmWithFreeze { get; set; } = true;
     public int RewardFloors { get; set; } = 7;
     public bool AvoidCombatAfterRewardFloors { get; set; } = true;

@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.1"
+const VERSION: String = "0.3.2"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -137,6 +137,14 @@ func _command(cmd: Dictionary) -> Dictionary:
 		return {"ok": true, "skipped": false}
 	if _state().is_empty():
 		return {"ok": false, "error": "请先登录游戏"}
+	if method == "local.refresh":
+		var refreshed: Dictionary = await net.call("request", "sima.get", {})
+		if refreshed.get("ok", false) and refreshed.get("data") is Dictionary:
+			sima = refreshed["data"].duplicate(true)
+			peeks.clear()
+			if is_instance_valid(panel):
+				panel.set("_data", sima.duplicate(true))
+		return _clean(refreshed)
 	if _fighting():
 		return {"ok": false, "error": "战斗仍在播放"}
 	if method == "hero.setSkills":
@@ -157,15 +165,19 @@ func _command(cmd: Dictionary) -> Dictionary:
 	var run: Dictionary = sima.get("run", {}) if sima.get("run") is Dictionary else {}
 	if str(cmd.get("runId", "")) != str(run.get("id", "")) or str(cmd.get("nodeId", "")) != str(run.get("nodo", "")):
 		return {"ok": false, "error": "深渊状态已变化，重新决策"}
+	if net.has_method("is_open") and not bool(net.call("is_open")):
+		return {"ok": false, "retryable": true, "error": "连接中断，请求尚未发出"}
 	var p: Node = await _get_panel()
 	if p == null:
 		return {"ok": false, "error": "无法打开深渊面板"}
 	if bool(p.get("_req_inflight")):
-		return {"ok": false, "error": "游戏正在处理请求"}
+		return {"ok": false, "error": "游戏正在处理请求，本次操作尚未发出", "retryable": true}
 	p.set("_data", sima.duplicate(true))
 	active = true
 	receipt = {}
 	waiting_id = int(net.get("_next_id"))
+	var request_id: int = waiting_id
+	var request_started: int = Time.get_ticks_msec()
 	if method == "sima.omen":
 		await p.call("_omen", str(args.get("opcion", "")))
 	elif method == "sima.fight" or method == "sima.open":
@@ -181,14 +193,18 @@ func _command(cmd: Dictionary) -> Dictionary:
 		_save("battle.json", last_battle)
 	var confirmed: bool = not receipt.is_empty()
 	var success: bool = confirmed and bool(receipt.get("ok", false))
-	if success and method == "sima.pacto":
+	if success and (method == "sima.pacto" or method == "sima.tear"):
 		peeks.clear()
-	var err: String = str(receipt.get("error", "")) if confirmed else "未收到操作回执，已暂停，禁止自动重试"
-	var entry: Dictionary = {"time": Time.get_unix_time_from_system(), "method": method, "args": args, "ok": success, "error": err}
+	var elapsed_ms: int = Time.get_ticks_msec() - request_started
+	var not_sent: bool = not confirmed and int(net.get("_next_id")) == request_id
+	var err: String = str(receipt.get("error", "")) if confirmed else "操作 %s 等待 %.1f 秒未收到服务端回执（请求 %d），正在核对结果" % [method, elapsed_ms / 1000.0, request_id]
+	if not_sent:
+		err = "操作 %s 尚未发出，可重试" % method
+	var entry: Dictionary = {"time": Time.get_unix_time_from_system(), "method": method, "args": args, "ok": success, "error": err, "requestId": request_id, "elapsedMs": elapsed_ms, "retryable": not_sent, "code": "" if confirmed else "receipt_missing"}
 	journal.append(entry)
 	if journal.size() > 100:
 		journal.pop_front()
-	return {"ok": success, "confirmed": confirmed, "method": method, "error": err}
+	return {"ok": success, "confirmed": confirmed, "method": method, "error": err, "requestId": request_id, "elapsedMs": elapsed_ms, "retryable": not_sent, "code": "" if confirmed else "receipt_missing"}
 
 func _snapshot() -> void:
 	seq += 1

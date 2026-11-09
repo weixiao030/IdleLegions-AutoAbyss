@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 
-const integers = ['simulations','seed','delayMs','startDepth','stopDepth','maxRuns','clearFloors','reserveRopes','rewardFloors','pactFloors'];
+const integers = ['simulations','seed','delayMs','startDepth','stopDepth','maxRuns','clearFloors','reserveRopes','rewardFloors','pactFloors','shieldSkipFloors'];
 const decimals = ['retreatHp','minWinRate','riskAversion','freezeWeight','enemyStrength','modelUncertainty','coreRewardWeight','shardRewardWeight','freezeDuration'];
 export function configError(config) {
   if (!config) return '正在载入参数';

@@ -37,7 +37,7 @@ static class SelfTest
             Assert(LoopPolicy.Stop(LoopPolicy.Configure(loopOriginal,new("count",0)),0,10)!=null, "零次循环保存成功且不新入场");
             var retained = JsonNode.Parse("{\"reliquias\":[{\"id\":\"es_carambano\",\"familia\":\"escarcha\"},{\"id\":\"um_filo\"}],\"guardaPendiente\":{\"cartas\":[{\"id\":\"um_filo\",\"llevas\":0}],\"heredadas\":1}}")!;
             var critCard = JsonNode.Parse("{\"id\":\"um_filo\",\"familia\":\"umbra\",\"desc\":\"+6 puntos de crítico y +20% de daño crítico\"}")!;
-            Assert(Cards.Inherited(retained).Length == 1 && Cards.IsCore(Cards.Inherited(retained)[0], cfg) && Cards.Priority(critCard, cfg, retained, "sima.guarda") == 350, "继承基线保留候选外旧核心，双暴进入补充档");
+            Assert(Cards.Inherited(retained).Length == 1 && Cards.IsCore(Cards.Inherited(retained)[0], cfg) && Cards.Priority(critCard, cfg, retained, "sima.guarda") > Cards.Priority(JsonNode.Parse("{\"desc\":\"+25% de defensa\"}")!, cfg, retained, "sima.guarda"), "继承基线保留候选外旧核心，双暴优于纯防御补充");
             var onlyBadge = JsonNode.Parse("{\"blasones\":[{\"id\":\"es2_carambano\"}],\"reliquias\":[],\"guardaPendiente\":{\"cartas\":[{\"id\":\"es_carambano\",\"llevas\":0}]}}")!;
             var transferable = JsonNode.Parse("{\"id\":\"es_carambano\",\"familia\":\"escarcha\",\"desc\":\"Tus autoataques CONGELAN al objetivo\"}")!;
             Assert(Cards.Priority(transferable, cfg, onlyBadge, "sima.guarda") == 2000 && Cards.Priority(transferable, cfg, onlyBadge) == 2000, "本层冻结徽章不能替代可继承冻结牌，选牌和唯一带走名额都优先核心");
@@ -45,7 +45,7 @@ static class SelfTest
             Assert(Cards.Project(onlyBadge, carryChoice).Count(c => Cards.IsCore(c, cfg)) == 1, "下一层只投影实际保留的冻结牌，不带走本层徽章");
             var blast = JsonNode.Parse("{\"id\":\"damage_bounce\",\"desc\":\"+10% de daño y cada 5 autoataques tu golpe salta a todos\"}")!;
             Assert(Cards.Priority(blast,cfg,retained,"sima.guarda") > Cards.Priority(critCard,cfg,retained,"sima.guarda"), "跨层核心已有时先弹跳再双暴，同级比较模拟");
-            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg) < Cards.Priority(critCard,cfg), "普通火系通用增伤仍低于双暴补充，不冒充状态增伤");
+            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg) == Cards.Priority(critCard,cfg), "通用攻击与双暴同档比较模拟，不因火系家族低估输出");
             var shopExit=new Choice("exit","sima.move",new()){Forecast=new(1,1,1,1,115,4096)};
             var shopGood=new Choice("good","sima.trade",new(),card:JsonNode.Parse("{\"desc\":\"+6% de daño\"}")){Forecast=new(.8,.7,.9,.5,90,4096)};
             var shopBad=new Choice("bad","sima.trade",new(),card:new JsonObject()){Forecast=new(.6,.5,.7,.4,70,4096)};
@@ -248,6 +248,7 @@ static class SelfTest
             local.Evaluate([sharpen,meditate],synthetic,fastCfg,CancellationToken.None);
             Assert(sharpen.Forecast!.Duration<meditate.Forecast!.Duration,"满血满魂时磨利强化会缩短后续战斗，而非永远选无收益冥想");
             StrategyTests.Run(Assert);
+            ResilienceTests.Run(Assert).GetAwaiter().GetResult();
             J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = true, checks }); return 0;
         }
         catch (Exception e) { J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = false, checks, error = e.ToString() }); return 1; }

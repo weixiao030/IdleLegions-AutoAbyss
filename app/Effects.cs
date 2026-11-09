@@ -77,6 +77,12 @@ sealed class Effects
 
 static class Cards
 {
+    internal static bool SkipEarlyShield(JsonNode card, JsonNode? run, Settings cfg) =>
+        cfg.SkipShieldCardsEarly && cfg.ShieldSkipFloors > 0 && run != null
+        && run.At("profundidad").N() < cfg.ShieldSkipFloors
+        && (Effects.Parse([card], cfg).Shield > 0
+            || Regex.IsMatch(card.At("descZh").S(), @"护盾|開局盾"));
+
     public static string Family(JsonNode? c)
     {
         var family = c.At("familia").S(); if (family != "") return family;
@@ -137,27 +143,30 @@ static class Cards
         if (missingCore && family == "escarcha") return (1000, "缺可继承冻结核心：先积累寒冷，优先减速、减速增伤和弹跳");
         if (!missingCore && fx.Shield > 0 && held.Shield == 0)
             return (1600, "已有冻结核心：先补开局护盾并继承，防止进房间时暴毙");
-        if (!missingCore && fx.Shield >= .2)
-            return (1500, "继续叠加高级开局护盾并继承，覆盖冻结生效前的伤害窗口");
-        int support = missingCore ? 800 : 1400;
-        if (fx.Slow > held.Slow && held.Slow == 0)
-            return (support, "先补减速来源，让减速增伤与冻结控制形成配合");
-        if (fx.VsSlow > 0 && (!missingCore || held.Slow > 0))
-            return (support - 100, "优先减速增伤，冻结也能满足模型中的减速目标条件");
-        if (fx.VsStatus > 0)
-            return (support - 120 + (family == "ponzona" ? 10 : 0), "优先异常状态增伤，毒火纯增伤均可搭配冻结");
+        // Secure one opening shield, then build damage. Repeated shields must
+        // not outrank every useful attack or bounce for the rest of the run.
         if (fx.Cleave > 0 && (held.Cleave == 0 || fx.Cleave < held.Cleave))
-            return (support - 150, "补充或加快普攻弹跳，冰毒电均可参与构筑");
-        if (fx.Slow > held.Slow) return (support - 180, "提高已有减速强度");
-        if (fx.Shield > 0 && held.Shield > 0) return (300, "允许继续补开局盾，高级护盾优先于普通护盾");
-        if (core) return (-10, "已有可继承冻结核心，无需重复叠冻结；优先其他有效强化");
-        if (family == "escarcha") return (600, "主效果未出现时优先补寒冷系列");
-        if (family == "ponzona") return (550, "寒冷关键牌未出现时优先毒系补充");
+            return (1550, "优先补充或加快普攻弹跳，冰毒电火均可；不选普攻点燃或带电");
+        if (fx.VsSlow > 0 && (!missingCore || held.Slow > 0))
+            return (1450, "优先减速目标增伤，冻结也能满足模型中的减速条件");
+        if (fx.VsStatus > 0)
+            return (1430, "优先异常状态增伤，提高冻结期间的输出");
+        if (fx.Slow > held.Slow && held.Slow == 0)
+            return (1400, "补一个减速来源，已有减速后不重复抢攻击名额");
         bool markSource = held.Mark > 0 || method != "sima.guarda" && run.At("heroes").A().Any(h => h.At("marca").B());
-        if (fx.Mark > 0) return (450, "冰毒关键效果未出现：补暗影标记来源");
-        if ((fx.MarkDeepen > 0 || fx.VsMarked > 0) && markSource) return (440, "已有标记来源：补标记加深或对标记增伤");
-        if (fx.Crit > 0 || fx.CritDamage > 0) return (350, "控制、异常增伤与弹跳之后，用双暴补输出");
-        return (100, "其他补充效果，同级比较模拟收益");
+        if (fx.Mark > 0) return (1350, "补充暗影标记，让后续攻击受益");
+        if ((fx.MarkDeepen > 0 || fx.VsMarked > 0) && markSource)
+            return (1340, "已有标记来源，优先标记增伤");
+        if (fx.MarkDeepen > 0 || fx.VsMarked > 0) return (100, "缺少标记来源，标记专用强化暂不抢输出名额");
+        if (fx.Damage > 0 || fx.Speed > 0 || fx.Crit > 0 || fx.CritDamage > 0 || fx.Execute > 0 || fx.VsElite > 0)
+            return (1300, "优先攻击、攻速和双暴等输出强化，同档比较模拟收益");
+        if (fx.Slow > held.Slow) return (900, "补强已有减速，优先级低于有效输出强化");
+        if (fx.Shield > 0 && held.Shield > 0)
+            return (fx.Shield >= .2 ? 450 : 300, "后续开局盾作为补充，优先把名额留给攻击和弹跳");
+        if (core) return (-10, "已有可继承冻结核心，无需重复叠冻结；优先其他有效强化");
+        // Family alone is not an offensive effect. Pure ice/poison defense
+        // receives no blanket bonus once the core search stage has ended.
+        return (100, "防御或其他补充效果，同级比较模拟收益");
     }
     public static int Priority(JsonNode c, Settings cfg, JsonNode? run = null, string method = "sima.reliquia") => BuildValue(c, cfg, run, method).Priority;
     public static string Reason(JsonNode c, Settings cfg, JsonNode run, string method) => BuildValue(c, cfg, run, method).Reason;

@@ -27,32 +27,74 @@ sealed class Bridge
         }
     }
     public bool Fresh(JsonNode? s) => s != null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - s.At("time").N() < 15;
+    public bool RetryTimeouts { get; set; } = true;
+    public Action<string>? Notice { get; set; }
     public async Task<JsonNode> Send(string method, JsonObject args, CancellationToken ct)
     {
         if (method == "sima.extract") throw new Exception("禁止撤离：此程序不执行撤离操作。");
         await gate.WaitAsync(ct);
         try
         {
-            var s = Snapshot;
-            if (!Fresh(s)) throw new Exception("游戏桥接未连接或快照已过期，请先安装桥接并启动游戏。");
-            if (s.At("fighting").B() && method != "local.skipReplay") throw new Exception("战斗播放中，请等待结束。");
-            var id = Guid.NewGuid().ToString("N");
-            var key = File.ReadAllText(Path.Combine(Paths.Bridge, "session.key")).Trim();
-            J.Write(Path.Combine(Paths.Bridge, "command.json"), new { id, key, method, args, issuedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, runId = s.At("sima", "run", "id").S(), nodeId = s.At("sima", "run", "nodo").S() });
-            // Once dispatched, finish observing the receipt even when the user pauses.
-            for (int i = 0; i < 240; i++)
+            var before = Snapshot?.DeepClone();
+            var result = await Dispatch(method, args, ct);
+            if (result.At("ok").B()) return result;
+            if (!RetryTimeouts || !Recoverable(result, method)) throw Failure(result, method);
+            // Unknown outcomes are reconciled with read-only state, never replayed.
+            // A command is resent only when the bridge proves it was not dispatched.
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
-                await Task.Delay(250);
-                var r = J.Read(Path.Combine(Paths.Bridge, "response.json"));
-                if (r.At("id").S() != id) continue;
-                if (!r.At("ok").B()) throw new Exception(r.At("error").S("游戏拒绝操作"));
-                // Let the bridge publish the matching post-operation snapshot.
-                for (int j = 0; j < 150; j++) { if (Snapshot.At("lastCommand", "id").S() == id) return r!; await Task.Delay(100); }
-                throw new Exception("回执成功，但状态快照未同步，已暂停。请检查游戏后再继续。");
+                if (ct.IsCancellationRequested) throw Failure(result, method);
+                Notice?.Invoke($"{method} 回执异常，自动恢复 {attempt}/2：" + (result.At("retryable").B() || method == "sima.peek" ? "重试未发出或只读请求。" : "查询最新游戏状态，核验操作是否已完成。"));
+                await Task.Delay(1000);
+                if (ct.IsCancellationRequested) throw Failure(result, method);
+                if (result.At("retryable").B() || method == "sima.peek")
+                {
+                    result = await Dispatch(method, args, ct);
+                    if (result.At("ok").B()) return result;
+                    if (!Recoverable(result, method)) throw Failure(result, method);
+                    continue;
+                }
+                var refresh = await Dispatch("local.refresh", new(), ct);
+                var after = Snapshot;
+                if (refresh.At("ok").B() && Fresh(after) && RecoveryRules.Completed(method, args, before, after))
+                {
+                    Notice?.Invoke(method + " 已通过最新游戏状态核验完成，继续下潜。");
+                    return new JsonObject { ["ok"] = true, ["confirmed"] = true, ["recovered"] = true, ["id"] = result.At("id").S() };
+                }
             }
-            throw new Exception("60 秒未收到回执。操作结果未知，已暂停且不会自动重试，请检查游戏。");
+            throw new Exception(method + " 自动恢复2次后仍无法确认操作结果，已暂停并保留深渊进度。请在游戏中核对后继续。原始原因：" + result.At("error").S());
         }
         finally { gate.Release(); }
+    }
+    static bool Recoverable(JsonNode result, string method) => result.At("retryable").B()
+        || result.At("code").S() is "receipt_missing" or "transport_timeout"
+        || result.At("error").S().Contains("未收到操作回执")
+        || method == "sima.peek" && (result.At("error").S().Contains("respuesta") || result.At("error").S().Contains("Conexión"));
+    static Exception Failure(JsonNode result, string method) => new(method + "：" + result.At("error").S("游戏拒绝操作"));
+    async Task<JsonNode> Dispatch(string method, JsonObject args, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var s = Snapshot;
+        if (!Fresh(s)) throw new Exception("游戏桥接未连接或快照已过期，请检查游戏连接后继续。");
+        if (s.At("fighting").B() && method is not ("local.skipReplay" or "local.refresh")) throw new Exception("战斗播放中，请等待结束。");
+        var id = Guid.NewGuid().ToString("N");
+        var key = File.ReadAllText(Path.Combine(Paths.Bridge, "session.key")).Trim();
+        J.Write(Path.Combine(Paths.Bridge, "command.json"), new { id, key, method, args, issuedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, runId = s.At("sima", "run", "id").S(), nodeId = s.At("sima", "run", "nodo").S() });
+        // Once dispatched, observe the receipt even when the user pauses.
+        for (int i = 0; i < 240; i++)
+        {
+            await Task.Delay(250);
+            var r = J.Read(Path.Combine(Paths.Bridge, "response.json"));
+            if (r.At("id").S() != id) continue;
+            // Both failure and success need their post-operation snapshot before recovery.
+            for (int j = 0; j < 150; j++)
+            {
+                if (Snapshot.At("lastCommand", "id").S() == id) return r!;
+                await Task.Delay(100);
+            }
+            return new JsonObject { ["ok"] = false, ["id"] = id, ["code"] = "transport_timeout", ["error"] = "回执已返回，但状态快照未同步。" };
+        }
+        return new JsonObject { ["ok"] = false, ["id"] = id, ["code"] = "transport_timeout", ["error"] = "60秒未收到桥接回执，操作结果未知。" };
     }
     public static string Resource(string name)
     {

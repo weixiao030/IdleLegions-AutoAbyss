@@ -54,7 +54,7 @@ static class Program
                 catch (ObjectDisposedException) { break; }
             }
         });
-        pilot.Note("控制台已启动。先保留跨层冻结核心，补一个继承开局盾，再优先减速、异常增伤与弹跳；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
+        pilot.Note("控制台已启动。先保留跨层冻结核心，补一个继承开局盾，再优先弹跳、异常增伤与攻击；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
         if (!args.Contains("--no-browser")) Open(url);
         Application.Run(context); listener.Close(); tray.Visible = false;
         try { File.Delete(Path.Combine(Paths.Data, "console.url")); } catch { }

@@ -16,6 +16,8 @@
   "prepareSkills": false,
   "skipBattleReplay": true,
   "autoPactWithFreeze": true,
+  "skipEightHitPact": true,
+  "skipDodgePact": true,
   "farmWithFreeze": true,
   "rewardFloors": 7,
   "avoidCombatAfterRewardFloors": true,
@@ -39,5 +41,8 @@
   "loopUntilRopesEmpty": false,
   "preferFreezeBuild": true,
   "avoidEliteIds": [],
-  "lightningConsumesFreeze": false
+  "lightningConsumesFreeze": false,
+  "retryTimeouts": true,
+  "skipShieldCardsEarly": true,
+  "shieldSkipFloors": 7
 }

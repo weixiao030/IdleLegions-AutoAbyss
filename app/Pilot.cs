@@ -39,11 +39,13 @@ sealed class Pilot
     {
         Directory.CreateDirectory(Paths.Data);
         Config = LoadConfig();
+        Bridge.RetryTimeouts = Config.RetryTimeouts;
+        Bridge.Notice = text => { phase = "超时恢复中"; message = text; Note(text); };
         var reports = Path.Combine(Paths.Data, "reports");
         if (Directory.Exists(reports)) reportPath = Directory.GetFiles(reports, "*.md").Order().LastOrDefault() ?? "";
     }
     Settings LoadConfig() { try { var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(Paths.Config), J.Options)!; if (!Settings.ValidFormation(s.Formation)) s.Formation = new Settings().Formation; s.Validate(); return s; } catch { return new(); } }
-    public void Save(Settings cfg) { if (Active) throw new Exception("请暂停后再修改参数。"); cfg.Validate(); J.Write(Paths.Config, cfg); Config = cfg; Note("参数已保存"); }
+    public void Save(Settings cfg) { if (Active) throw new Exception("请暂停后再修改参数。"); cfg.Validate(); J.Write(Paths.Config, cfg); Config = cfg; Bridge.RetryTimeouts = cfg.RetryTimeouts; Note("参数已保存"); }
     public void SaveFormation(string[]? formation)
     {
         if (!Settings.ValidFormation(formation)) throw new Exception("请选择 4 个不同职业，按前排到后排排列。");
@@ -126,7 +128,7 @@ sealed class Pilot
         var run = s.At("sima", "run");
         maxDepth = Math.Max(maxDepth, (int)run.At("profundidad").N());
         coreAcquired |= run.At("reliquias").A().Concat(run.At("blasones").A()).Any(x => Cards.IsCore(x, Config));
-        if (run != null && (!preview || Config.AvoidEliteIds.Length > 0))
+        if (run != null && RevivalRules.Choice(run) == null && (!preview || Config.AvoidEliteIds.Length > 0))
         {
             var node = run.At("nodo").S();
             var needed = run.At("destinos").A().Select(x => x.S()).Append(node).Where(x => x != "").Distinct();
@@ -141,7 +143,7 @@ sealed class Pilot
         var candidates = Build(s!);
         if (candidates.Length == 0) throw new Exception("当前房间没有已识别的合法操作，请在游戏中查看状态后继续。");
         phase = "本地推演中"; message = $"比较 {candidates.Length} 个候选，每候选 {Config.Simulations:N0} 次。";
-        if (run != null) sim.Evaluate(candidates, s!, Config, ct);
+        if (run != null && !candidates.All(c => c.Method == "sima.tear")) sim.Evaluate(candidates, s!, Config, ct);
         // Money has no reserve target. Compare a purchase with no purchase in
         // the same future encounter before allowing a shop exit to compete.
         var purchases = candidates.Where(c => c.Method == "sima.trade").ToArray();
@@ -166,11 +168,11 @@ sealed class Pilot
         }
         ct.ThrowIfCancellationRequested();
         phase = "执行中"; message = pick.Label;
-        Note(pick.Label + (pick.Forecast is { } forecast ? $"，模型胜率 {forecast.Win:P1}，{forecast.Trials:N0} 次" : ""));
+        Note(pick.Label + (pick.Reason == "" ? "" : "，" + pick.Reason) + (pick.Forecast is { } forecast ? $"，模型胜率 {forecast.Win:P1}，{forecast.Trials:N0} 次" : ""));
         var beforeLoot = run.At("botin");
         var beforeRun = s.At("sima", "run", "id").S();
         var beforeBattle = s.At("lastBattle", "time").S();
-        await Bridge.Send(pick.Method, pick.Args, ct);
+        var outcome = await Bridge.Send(pick.Method, pick.Args, ct);
         var after = Bridge.Snapshot;
         finalCores = after.At("sima","nucleos").N(initialCores); finalShards = after.At("sima","esquirlas").N(initialShards);
         sim.Learn(after);
@@ -184,8 +186,17 @@ sealed class Pilot
             if (pick.Forecast is { } p) predictionErrors.Add(Math.Pow(p.Win - (wonBattle ? 1 : 0), 2));
         }
         if (pick.Method == "sima.fight" && run.At("mapa", "nodos", run.At("nodo").S(), "tipo").S() == "jefe" && after.At("lastBattle", "result", "win").B()) clearedFloors++;
-        receipts.Add(new { time = DateTimeOffset.Now, pick.Method, pick.Args, pick.Label, prediction = pick.Forecast, priority = pick.Priority, reason = pick.Reason, cardId = pick.Card.At("id").S(), options = candidates.Where(c => c.Card != null).Select(c => new { id = c.Card.At("id").S(), c.Priority, c.Reason }).ToArray(), inheritance = pick.Method == "sima.guarda" ? new { fromDepth = run.At("profundidad").N(), toDepth = after.At("sima", "run", "profundidad").N(), before = Cards.Inherited(run!).Select(c => c.At("id").S()).ToArray(), after = after.At("sima", "run", "reliquias").A().Select(c => c.At("id").S()).ToArray() } : null, confirmed = true, obolsSpent = pick.Method == "sima.trade" ? Math.Max(0, beforeLoot.At("obolos").N() - after.At("sima", "run", "botin", "obolos").N()) : 0, loot = new { cores = Math.Max(0, after.At("sima", "run", "botin", "nucleos").N() - beforeLoot.At("nucleos").N()), shards = Math.Max(0, after.At("sima", "run", "botin", "esquirlas").N() - beforeLoot.At("esquirlas").N()) }, run = beforeRun, node = run.At("nodo").S(), nextRun = after.At("sima", "run", "id").S(), nextNode = after.At("sima", "run", "nodo").S() });
+        if (pick.Method == "sima.tear" && run != null)
+        {
+            var error = RevivalRules.Error(run, after.At("sima", "run"), pick.Args.At("heroId").S());
+            if (error != null) throw new Exception(error);
+        }
+        receipts.Add(new { recovered = outcome.At("recovered").B(), time = DateTimeOffset.Now, pick.Method, pick.Args, pick.Label, prediction = pick.Forecast, priority = pick.Priority, reason = pick.Reason, cardId = pick.Card.At("id").S(), options = candidates.Where(c => c.Card != null).Select(c => new { id = c.Card.At("id").S(), c.Priority, c.Reason }).ToArray(), inheritance = pick.Method == "sima.guarda" ? new { fromDepth = run.At("profundidad").N(), toDepth = after.At("sima", "run", "profundidad").N(), before = Cards.Inherited(run!).Select(c => c.At("id").S()).ToArray(), after = after.At("sima", "run", "reliquias").A().Select(c => c.At("id").S()).ToArray() } : null, confirmed = true, obolsSpent = pick.Method == "sima.trade" ? Math.Max(0, beforeLoot.At("obolos").N() - after.At("sima", "run", "botin", "obolos").N()) : 0, loot = new { cores = Math.Max(0, after.At("sima", "run", "botin", "nucleos").N() - beforeLoot.At("nucleos").N()), shards = Math.Max(0, after.At("sima", "run", "botin", "esquirlas").N() - beforeLoot.At("esquirlas").N()) }, run = beforeRun, node = run.At("nodo").S(), nextRun = after.At("sima", "run", "id").S(), nextNode = after.At("sima", "run", "nodo").S() });
         PersistSession();
+        if (pick.Method == "sima.tear" && run != null)
+        {
+            Note("复活已核验：" + pick.Label + "；剩余眼泪 " + after.At("sima", "run", "lagrimas").N() + "，继续检查其他倒地队员。");
+        }
         if (pick.Method == "sima.guarda" && run != null && pick.Card != null)
         {
             var error = Cards.InheritanceError(run, after.At("sima", "run"), pick.Card, Config);
@@ -219,6 +230,16 @@ sealed class Pilot
     }
     internal Choice[] Build(JsonNode s)
     {
+        var candidates = BuildActions(s);
+        var run = s.At("sima", "run");
+        var skipped = PactEligible(run, Config) ? PactRules.SkipReason(run.At("pacto"), Config) : null;
+        if (skipped != null)
+            foreach (var choice in candidates.Where(c => c.Method is "sima.fight" or "sima.open"))
+                choice.Reason = string.Join("；", new[] { choice.Reason, "不缔约：" + skipped }.Where(x => x != ""));
+        return candidates;
+    }
+    Choice[] BuildActions(JsonNode s)
+    {
         var run = s.At("sima", "run");
         if (run == null)
         {
@@ -243,8 +264,8 @@ sealed class Pilot
         if (Config.StopDepth > 0 && run.At("profundidad").N() >= Config.StopDepth) throw new FinishedException("已到达自定义深度，已暂停保留深渊进度。");
         var heroesInRun = run.At("heroes").A().ToArray();
         var low = heroesInRun.Where(h => !h.At("caido").B()).Any(h => h.At("hp").N() / Math.Max(1, h.At("hpMax").N()) < Config.RetreatHp);
-        var down = heroesInRun.FirstOrDefault(h => h.At("caido").B());
-        if (down != null && run.At("lagrimas").N() > 0) return [new("使用眼泪复活 " + J.Name(down), "sima.tear", new() { ["heroId"] = down.At("id").S() }, .8)];
+        var revival = RevivalRules.Choice(run);
+        if (revival != null) return [revival];
         if (low && type != "santuario")
         {
             throw new Exception("生命低于自定义暂停线，已暂停并保留深渊进度。撤离已禁止。");
@@ -274,6 +295,7 @@ sealed class Pilot
             if (run.At("tienda", "precio").N(double.MaxValue) <= obols)
             foreach (var card in run.At("tienda", "buffs").A())
             {
+                if (Cards.SkipEarlyShield(card, run, Config)) continue;
                 var bid = "buff:" + card.At("id").S(); var rated = Cards.Rate(card, Config);
                 if (!rated.Allowed || rated.Value < 0 || bought.Contains(id + ":" + bid) || completed.Contains(run.At("id").S() + ":" + id + ":" + bid)) continue;
                 shop.Add(new("商店：" + J.Name(card), "sima.trade", new() { ["oferta"] = bid }, rated.Value, 0, rated.Core, Cards.Priority(card, Config, run, "sima.trade"), card) { Reason = Cards.Reason(card, Config, run, "sima.trade") });
@@ -331,14 +353,17 @@ sealed class Pilot
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
-        cards = cards.Where(c => Cards.Rate(c, Config).Allowed).ToArray();
+        bool skippedShield = cards.Any(c => Cards.Rate(c, Config).Allowed && Cards.SkipEarlyShield(c, run, Config));
+        cards = cards.Where(c => Cards.Rate(c, Config).Allowed && !Cards.SkipEarlyShield(c, run, Config)).ToArray();
         // A fully inherited stack grants no additional effect. Prefer any card
         // that can still add a stack; keep a legal fallback when all are capped.
         if (method == "sima.guarda" && cards.Any(c => c.At("llevas").N() < 3))
             cards = cards.Where(c => c.At("llevas").N() < 3).ToArray();
         var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择徽章：" : "选择遗物：";
         var choices = cards.Select(c => (Card: c, Rating: Cards.Rate(c, Config))).Where(x => x.Rating.Allowed).Select(x => new Choice((x.Rating.Core ? "普攻冻结核心：" : action) + J.Name(x.Card), method, new() { ["id"] = x.Card.At("id").S() }, x.Rating.Value, x.Rating.Value < 0 ? 1 : 0, x.Rating.Core, Cards.Priority(x.Card, Config, run, method), x.Card) { Reason = Cards.Reason(x.Card, Config, run, method) }).ToArray();
-        if (choices.Length == 0) throw new Exception("当前选项全部是禁止的普攻点燃/带电牌，已暂停，不会自动选择；请在游戏中处理后继续。");
+        if (choices.Length == 0) throw new Exception(skippedShield
+            ? "当前选项只剩前几层暂不选择的护盾或禁止的普攻点燃/带电牌，已暂停；请手动处理或关闭前期护盾避让后继续。"
+            : "当前选项全部是禁止的普攻点燃/带电牌，已暂停，不会自动选择；请在游戏中处理后继续。");
         return choices;
     }
     internal static Choice[] BeforeShopExit(Choice[] candidates, Forecast? baseline)
@@ -387,10 +412,12 @@ sealed class Pilot
         };
     }
     internal static Choice[] Rank(Choice[] candidates) => candidates.OrderByDescending(c => c.Priority).ThenByDescending(c => c.Forecast?.Score ?? c.Benefit * 6 - c.Risk * 3).ToArray();
-    internal static bool ShouldPact(JsonNode run, Settings cfg) => cfg.AutoPactWithFreeze && cfg.PactFloors > 0
+    internal static bool PactEligible(JsonNode? run, Settings cfg) => run != null && cfg.AutoPactWithFreeze && cfg.PactFloors > 0
         && run.At("profundidad").N() < cfg.PactFloors && run.At("pacto") is JsonObject
         && !run.At("pacto", "sellado").B()
         && run.At("reliquias").A().Concat(run.At("blasones").A()).Any(c => Cards.IsCore(c, cfg));
+    internal static bool ShouldPact(JsonNode run, Settings cfg) => PactEligible(run, cfg)
+        && PactRules.SkipReason(run.At("pacto"), cfg) == null;
     internal static bool NeedsPeek(JsonNode? s, JsonNode run, string id)
     {
         var peek = s.At("peeks", id);
@@ -404,8 +431,11 @@ sealed class Pilot
     internal Choice[] FightChoices(JsonNode s, JsonNode run, string id)
     {
         var enemies = s.At("peeks", id, "enemigos").A().ToArray();
-        var heroes = s.At("peeks", id, "legion").A().ToArray();
-        if (heroes.Length == 0) heroes = run.At("heroes").A().Where(x => !x.At("caido").B()).ToArray();
+        // The live run is authoritative after revival. A cached preview can
+        // still omit a revived hero or contain one who has since fallen.
+        var members = run.At("heroes").A().ToArray();
+        var heroes = members.Length > 0 ? members.Where(x => !x.At("caido").B()).ToArray()
+            : s.At("peeks", id, "legion").A().ToArray();
         if (enemies.Length == 0) return [new("战斗：默认目标", "sima.fight", new() { ["objetivos"] = new JsonObject(), ["desafio"] = false })];
         var result = new List<Choice>();
         void Enumerate(int i, JsonObject obj, List<string> labels)
@@ -460,13 +490,15 @@ sealed class Pilot
         text.AppendLine($"结算资源净变化：核心 {finalCores-initialCores:+0;-0;0}，碎屑 {finalShards-initialShards:+0;-0;0}。暂存战利品与实际结算资源分开统计。\n");
         text.AppendLine($"最高到达深度：{maxDepth}；击败层首领：{clearedFloors}；本段战斗：{wins} 胜 / {losses} 负；普攻冻结核心：{(coreAcquired ? "已取得" : "本段未取得")}。\n");
         if (predictionErrors.Count > 0) text.AppendLine($"本段预测 Brier 分数：{predictionErrors.Average():F4}（越低越好，样本 {predictionErrors.Count} 场）。这只衡量这批已选动作，不能验证未选动作的反事实胜率。\n");
-        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。已有一个可继承冻结核心后可升级传说五次弹跳，并叠加高级开局盾、减速和异常增伤。普攻点燃与普攻带电硬禁。纯电伤清除冻结假设：{Config.LightningConsumesFreeze}（默认关闭，尚未确认服务端规则）。技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执，超时不自动重试。\n");
+        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。已有一个可继承冻结核心后可升级传说五次弹跳，先补一张开局盾，再优先攻击、弹跳和异常增伤，后续高级盾作为补充。普攻点燃与普攻带电硬禁。纯电伤清除冻结假设：{Config.LightningConsumesFreeze}（默认关闭，尚未确认服务端规则）。技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执。超时自动恢复：{Config.RetryTimeouts}；最多重试2次，未知结果先只读核验，确认未发出才重发。\n");
+        text.AppendLine($"前期护盾避让：{Config.SkipShieldCardsEarly}，前 {Config.ShieldSkipFloors} 层；已持有护盾不移除。\n");
+        text.AppendLine($"契约避让：前8次受击免疫 {Config.SkipEightHitPact}，15%闪避 {Config.SkipDodgePact}；跳过契约后仍正常战斗，已签约的效果不会撤销。\n");
         text.AppendLine($"奖励路线：有冻结核心且处于前 {Config.RewardFloors} 层时优先战斗，核心资源权重 {Config.CoreRewardWeight}、碎屑权重 {Config.ShardRewardWeight}；之后优先避战：{Config.AvoidCombatAfterRewardFloors}。必经战斗继续执行。\n");
         text.AppendLine("本地预测基于客户端事件与未知属性先验，不是服务端精确战斗模拟。抽样置信区间不包含模型误差，不能宣称全局最高真实胜率。\n");
         text.AppendLine($"循环模式：{(Config.LoopUntilRopesEmpty ? "直到绳索用完（保留0）" : $"循环{Config.MaxRuns}次")}；已完成 {runs} 次。\n");
         foreach (var result in roundResults) { var r = JsonSerializer.SerializeToNode(result, J.Options); text.AppendLine($"第 {r.At("number").N()} 次：{(r.At("won").B() ? "通关" : "战败")}，P{r.At("depth").N()}，核心 {r.At("coreDelta").N():+0;-0;0}、碎屑 {r.At("shardDelta").N():+0;-0;0}。\n"); }
         text.AppendLine("## 确认过的操作\n\n| 时间 | 操作 | 结果 |\n|---|---|---|");
-        foreach (var r in receipts) { var n = JsonSerializer.SerializeToNode(r, J.Options); text.AppendLine($"| {DateTimeOffset.Parse(n.At("time").S()):HH:mm:ss} | {n.At("label").S().Replace("|", "/")} | 服务端成功回执 |"); }
+        foreach (var r in receipts) { var n = JsonSerializer.SerializeToNode(r, J.Options); text.AppendLine($"| {DateTimeOffset.Parse(n.At("time").S()):HH:mm:ss} | {n.At("label").S().Replace("|", "/")} | {(n.At("recovered").B() ? "超时后游戏状态核验完成" : "服务端成功回执")} |"); }
         text.AppendLine("\n详细数据位于同目录上级的 last-session.json、battles/ 与 pilot-日期.jsonl。\n");
         File.WriteAllText(reportPath, text.ToString(), new System.Text.UTF8Encoding(false));
     }
