@@ -2,6 +2,7 @@
 import hashlib
 import os
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 
@@ -24,6 +25,8 @@ def atomic_text(path, text):
     os.replace(temporary, path)
 
 def main():
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     exe = RELEASE / 'IdleLegions自动下井.exe'
     if not exe.is_file():
         raise SystemExit('请先运行 build.ps1 构建 Windows EXE。')
