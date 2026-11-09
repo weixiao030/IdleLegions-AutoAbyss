@@ -9,8 +9,8 @@ export default function ElitePicker({value = [], onChange, disabled}) {
   const visible = elites.filter(e => (e.name + e.group).includes(search.trim()));
   const groups = [...new Set(visible.map(e => e.group))];
   return <div className="elite-picker">
-    <div className="elite-picker-heading"><strong id="elite-picker-label">优先跳过的精英怪</strong><Badge color="gray" variant="soft">{selected.length ? `已选 ${selected.length} 种` : '默认不选'}</Badge></div>
-    <p id="elite-picker-help">不选时沿用常规路线。选中只降低遇到它的路线评分；必经或明显更安全时仍会前进。</p>
+    <div className="elite-picker-heading"><strong id="elite-picker-label">优先跳过的精英怪</strong><Badge color="gray" variant="soft">{selected.length ? `已选 ${selected.length} 种` : '未选'}</Badge></div>
+    <p id="elite-picker-help">新配置默认避让陪葬旗官，可取消或清空；不选时沿用常规路线。选中只降低遇到它的路线评分；必经或明显更安全时仍会前进。</p>
     <Popover.Root onOpenChange={open => { if (!open) setSearch(''); }}>
       <Popover.Trigger><Button variant="outline" disabled={disabled} aria-labelledby="elite-picker-label" aria-describedby="elite-picker-help">{selected.length ? '调整避让名单' : '选择精英，可多选'}<CaretDown/></Button></Popover.Trigger>
       <Popover.Content className="elite-popover" align="start" aria-label="精英避让名单">

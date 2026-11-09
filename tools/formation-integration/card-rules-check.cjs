@@ -12,7 +12,18 @@ async (page) => {
  let s=await status();
  assert(s.config.allowBasicBurn===true&&s.config.allowBasicLightning===false,'默认点燃允许、带电禁止');
  assert(await toggle('允许普攻点燃').isChecked()&&!await toggle('允许普攻带电').isChecked(),'两个独立Radix开关正确展示默认状态');
- assert(await page.locator('.basic-attack-settings .section-desc').innerText().then(t=>t.includes('引爆器一份')&&t.includes('不再选冰减速')&&t.includes('不压过弹跳')),'最终规则文案含引爆器一次、冰减速硬禁和弹跳次序');
+ assert(await page.locator('.basic-attack-settings .section-desc').innerText().then(t=>t.includes('引爆器一份')&&t.includes('优先不再选冰减速')&&t.includes('优先只拿冰系（含冰减速）')&&t.includes('本章已拿到冻结仍可优先多拿，等章末继承确认')),'最终规则区分继承前冰系优先与继承后避冰减速，拿到冻结不提前解除');
+ for(const title of ['优先奖励的前几层','自动缔约的前几层','前X层优先不选护盾牌','跳过护盾的前几层']) {
+  const field=page.locator('.field').filter({has:page.getByText(title,{exact:true})});
+  assert((await field.innerText()).includes('根据强度自行配置'),title+'显示强度配置提示');
+ }
+ for(const [title,note] of [['每候选模拟次数','根据电脑配置自行决定'],['操作间隔','根据网络自行决定']]) {
+  assert((await page.locator('.field').filter({has:page.getByText(title,{exact:true})}).innerText()).includes(note),title+'显示指定配置提示');
+ }
+ assert((await page.locator('.basic-attack-settings .footnote').innerText()).includes('择优兜底，不因偏好暂停'),'全部选牌策略说明兜底而非暂停');
+ assert((await page.locator('.field').filter({has:page.getByText('前X层优先不选护盾牌',{exact:true})}).innerText()).includes('无合适候选可兜底拿盾'),'护盾开关明确软避让及兜底');
+ assert((await page.locator('.basic-attack-settings .section-desc').innerText()).includes('冻结未确认继承前可优先多拿，不因本章已有而降权'),'冻结未继承前多拿且不降权说明可见');
+ assert((await page.locator('.basic-attack-settings .section-desc').innerText()).includes('确认继承一份后不再追纯冻结，混合牌按新增弹跳和附带增益比较'),'冻结继承后停止追纯冻结、保留混合收益说明可见');
  await toggle('允许普攻点燃').uncheck();await waitSaved('allowBasicBurn',false);
  assert(!(await status()).config.allowBasicLightning,'关闭火不连动电');
  await toggle('允许普攻带电').check();await waitSaved('allowBasicLightning',true);
@@ -40,7 +51,7 @@ async (page) => {
   await page.locator('.basic-attack-settings').scrollIntoViewIfNeeded();
   const m=await page.evaluate(()=>({width:innerWidth,documentWidth:document.documentElement.scrollWidth}));metrics.push({...m,theme});assert(m.documentWidth<=m.width,width+' '+theme+' 无横向溢出');
   assert(await toggle('允许普攻点燃').isVisible()&&await toggle('允许普攻带电').isVisible(),width+' '+theme+' 双开关可见');
-  await page.screenshot({path:'output/playwright/cards132/settings-'+width+'-'+theme+'.png',animations:'disabled'});
+  await page.screenshot({path:'output/playwright/cards134/settings-'+width+'-'+theme+'.png',animations:'disabled'});
  }
  await page.request.get(new URL('/test/state?active=1&run=1',page.url()).href);
  await page.waitForFunction(()=>document.querySelector('[role=switch][aria-label=允许普攻点燃]')?.matches(':disabled'));

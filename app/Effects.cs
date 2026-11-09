@@ -117,31 +117,36 @@ static class Cards
     }
     // Acquisition and inheritance use carryable relics as the baseline.
     // A temporary badge cannot replace a core or shield that must survive the floor.
-    internal static (int Priority, string Reason) BuildValue(JsonNode c, Settings cfg, JsonNode? run, string method)
+    internal static (int Priority, string Reason) BuildValue(JsonNode c, Settings cfg, JsonNode? run, string method, bool strategyFallback = false)
     {
         var baseline = CardRules.Baseline(run, method);
         var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);
-        var skip = CardRules.SkipReason(c, run, cfg, method);
+        var skip = strategyFallback ? null : CardRules.SkipReason(c, run, cfg, method);
         if (skip != null) return (-10000, skip);
         bool core = IsCore(c, cfg), missingCore = !baseline.Any(x => IsCore(x, cfg));
         bool inheritedCore = CardRules.HasInheritedCore(run, cfg);
         bool advanced = c.At("id").S() == "es_glaciar" || core && fx.Cleave is > 0 and <= 5;
         int penalty = CardRules.RepeatPenalty(c, baseline, cfg);
         (int, string) Score(int priority, string reason) => (priority - penalty,
-            reason + (penalty > 0 ? "；已有同牌或同档弹跳，降低重复优先级，优先补不同增伤" : ""));
-        if (missingCore && core) return (advanced ? 2200 : 2000, method == "sima.guarda"
-            ? "第一优先继承普攻冻结，保证下一层仍能结冰；临时徽章不能替代"
-            : "第一优先取得可继承普攻冻结，随后优先把它带到下一层");
+            reason + (penalty > 0 ? "；同牌/弹跳重复或独立状态已有，按附带有效增益降权比较，优先补不同增伤" : ""));
+        // Collect additional freeze offers until a next-chapter receipt confirms
+        // inheritance. Current-floor copies/badges never end this stage and do
+        // not incur repeat penalties; this is a strategy, not a probability claim.
+        if (core && !inheritedCore) return (advanced ? 2200 : 2000, method == "sima.guarda"
+            ? "尚未确认继承：优先带走一份普攻冻结；本章多拿不代表全部继承，临时徽章不能替代"
+            : "尚未确认继承：继续优先多拿普攻冻结，不因本章已有冻结而去重或降权；继承概率变化尚未验证");
+        // Family accumulation is the normal stage; forced menus may fall back.
+        // A newly acquired freeze relic or temporary badge does not end it.
+        if (!inheritedCore && Family(c) == "escarcha")
+            return Score(1950, "普攻冻结尚未继承，优先只拿冰系积累系列倾向；冰减速也可拿，拿到冻结后仍等章末继承确认");
         if (CardRules.AvoidIceAfterCore(c, run, cfg))
-            return Score(-500, "已继承冻结，优先避开冰伤；仅在强制选牌没有其他合法选项时补充，冰减速仍禁止");
-        if (!cfg.PreferFreezeBuild) return Score(0, "按模拟收益比较；独立开关、重复效果与冰系选择规则仍生效");
+            return Score(-500, "已继承冻结，优先避开冰伤；仅在强制选牌没有其他合法选项时补充，冰减速正常避让，无合适候选才兜底");
+        if (!cfg.PreferFreezeBuild) return Score(0, "继承冻结后按模拟收益比较；继承前冰系优先、独立开关和去重正常执行，无合适候选可兜底");
         if (cfg.AvoidFireLightning && fx.ConsumesStatus && !CardRules.BoostDetonator(fx, cfg))
             return Score(-100, "消耗目标状态且未启用点燃搭配，降低优先级");
         if (fx.Cleave > 0 && (held.Cleave == 0 || fx.Cleave < held.Cleave))
             return Score(1950 - Math.Min(50, fx.Cleave), "冻结之后优先新增或更快的普攻全体弹跳；同档优先触发间隔更短，各元素弹跳均可");
-        if (!inheritedCore && missingCore && Family(c) == "escarcha")
-            return Score(1875, "尚无冻结核心时冰系作前期兜底，但不压过冻结普攻和全体弹跳；拿到冻结后不再继续堆冰");
         string family = Family(c);
         var applications = CardRules.Applications(c, cfg);
         var heldApplications = baseline.Aggregate(BasicEffect.None, (all, card) => all | CardRules.Applications(card, cfg));
@@ -189,6 +194,7 @@ static class Cards
         var cards = c.Method == "sima.guarda" ? Inherited(run) : Current(run);
         if (c.Card == null) return cards;
         // Badges affect this floor only. Inheritance projects relics only, never badges or buffs.
+        if (c.Method == "sima.guarda" && cards.Count(x => x.At("id").S() == c.Card.At("id").S()) >= 3) return cards;
         return cards.Append(c.Card).ToArray();
     }
     public static (bool Allowed, double Value, bool Core) Rate(JsonNode c, Settings cfg)

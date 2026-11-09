@@ -60,14 +60,17 @@ static class CardSelectionTests
         var afterArrival = Run(freeze); afterArrival["llegada"] = new JsonObject { ["reliquias"] = 1 };
         check(!CardRules.HasInheritedCore(sameFloor, cfg) && CardRules.HasInheritedCore(afterArrival, cfg),
             "利用真实llegada.reliquias区分本层拿到冻结与已经继承冻结");
-        check(Priority(slow, Run()) < Priority(bounce, Run()) && Priority(slow, Run()) > Priority(fireDamage, Run())
-            && Priority(slow, sameFloor) < Priority(bounce, sameFloor) && Priority(slow, Run()) < Priority(freeze, Run()),
-            "前期冰系仅在尚无冻结时作兜底，不压过弹跳；本章已拿冻结后不再堆冰");
+        check(Priority(slow, Run()) == 1950 && Priority(bounce, Run()) == -10000 && Priority(fireDamage, Run()) == -10000
+            && Priority(slow, sameFloor) == 1950 && Priority(bounce, sameFloor) == -10000
+            && Priority(slow, Run()) < Priority(freeze, Run()),
+            "冻结继承前冰减速高于非冰弹跳火增伤，本章取得冻结仍不解除仅冰阶段");
         check(Priority(detonate, afterArrival) > Priority(detonate, sameFloor), "引爆器在冻结继承后才获得点燃搭配加权");
         check(CardRules.AvoidIceAfterCore(slow, afterArrival, cfg) && CardRules.AvoidIceAfterCore(iceDamage, afterArrival, cfg)
             && !CardRules.AvoidIceAfterCore(iceBounce, afterArrival, cfg), "冻结继承后避开冰减速和冰伤，冰全体弹跳保留");
-        check(CardRules.SkipReason(burnDamage, Run(freeze, burn), cfg, "sima.reliquia") != null,
-            "点燃独立效果已经拥有，另一张点燃附带4%伤害也不诱导重复获取");
+        check(CardRules.SkipReason(burnDamage, Run(freeze, burn), cfg, "sima.reliquia") == null
+            && Priority(burnDamage, Run(freeze, burn)) == 1200
+            && Priority(burnDamage, Run(freeze, burn)) < Priority(attack, Run(freeze, burn)),
+            "点燃已有时烈焰附带4%伤害仍可选，按1200降权且不压过正常攻击");
         check(CardRules.SkipReason(glacier, inherited, cfg, "sima.reliquia") == null,
             "已有普通冻结仍允许提供新增全体弹跳的传说核心");
         check(CardRules.SkipReason(bounce, Run(freeze, bounce), cfg, "sima.reliquia") == null
@@ -104,7 +107,7 @@ static class CardSelectionTests
         foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.trade", "sima.guarda" })
         {
             check(CardRules.SkipReason(detonate, Run(freeze, detonate), cfg, method)?.Contains("引爆器") == true,
-                method + " 引爆器只需一份，已持有/继承后硬性跳过");
+                method + " 引爆器只需一份，已持有/继承后正常避让");
             var detonateVariant = Card("fixture_detonator_variant", "brasa", "Tus autoataques CONSUMEN el estado del objetivo y +20% de daño y cada 5 autoataques, tu golpe salta a todos");
             check(CardRules.SkipReason(detonateVariant, Run(freeze, detonate), cfg, method)?.Contains("引爆器") == true,
                 method + " 引爆器不同ID或附带数值弹跳也不诱导重复继承");
@@ -148,15 +151,14 @@ static class CardSelectionTests
                 check(new JsonArray(options.Select(c => c.DeepClone()).ToArray()).ToJsonString() == copy,
                     method + " 不删除或改写游戏原始卡牌与描述");
                 check(pilot.CardChoices([slow, iceDamage], method, afterArrival).Single().Card.At("id").S() == "es_ventisca",
-                    method + " 强制选牌仅剩冰减速冰伤时只允许冰伤，严格不再自动拿冰减速");
+                    method + " 强制选牌仅剩冰减速冰伤时只允许冰伤，有正常候选时不再自动拿冰减速");
                 check(Pilot.Rank(pilot.CardChoices([fireDamage, freeze, bounce], method, Run()))[0].Card.At("id").S() == "es_carambano",
                     method + " 冻结普攻必须排在所有后续搭配前面");
             }
             foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda" })
             {
-                bool stopped = false;
-                try { pilot.CardChoices([slow], method, afterArrival); } catch (Exception e) { stopped = e.Message.Contains("不再自动选择冰减速"); }
-                check(stopped, method + " 冻结已继承时只剩冰减速明确暂停，不违背不要再拿的硬规则");
+                var fallback = pilot.CardChoices([slow], method, afterArrival).Single();
+                check(fallback.Card.At("id").S() == "es_helada" && fallback.Label.Contains("兜底"), method + " 冻结已继承但只剩冰减速时明确兜底，不因策略暂停");
             }
             check(Pilot.Rank(pilot.CardChoices([burn, detonate, fireDamage], "sima.guarda", afterArrival))[0].Card.At("id").S() == "br_yesca",
                 "冻结继承后点燃独立效果优先继承一次，高于引爆器与火增伤");

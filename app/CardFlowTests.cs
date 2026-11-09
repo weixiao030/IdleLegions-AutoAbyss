@@ -21,8 +21,12 @@ static class CardFlowTests
             var badge = JsonNode.Parse("""{"id":"es4_hielo","familia":"escarcha","desc":"+40% de daño contra enemigos LENTOS"}""")!;
             var snapshot = JsonNode.Parse("""{"loggedIn":true,"heroes":[{"id":"hero","nombre":"Hero","stats":{"hp":1000,"atk":100,"spd":1,"crit":0}}],"sima":{"run":{"id":"flow-run","nodo":"end","profundidad":0,"llegada":null,"heroes":[{"id":"hero","nombre":"Hero","hp":1000,"hpMax":1000,"anima":100}],"reliquias":[],"blasones":[],"buffs":[],"mapa":{"nodos":{"end":{"tipo":"jefe","fila":8},"start":{"tipo":"santuario","fila":0}}},"destinos":[],"hechos":["end"]}},"peeks":{"end":{"enemigos":[{"name":"Defeated boss"}]},"start":{"enemigos":[]}}}""")!;
             var run = snapshot.At("sima", "run")!;
-            run["reliquiaOferta"] = new JsonArray(slow.DeepClone(), freeze.DeepClone());
+            var fire = JsonNode.Parse("""{"id":"br_fragua","familia":"brasa","desc":"+50% de daño de tus reacciones elementales, y +5% de daño"}""")!;
+            var bounce = JsonNode.Parse("""{"id":"fu_cadena","familia":"fulgor","desc":"Cada 5 autoataques, tu golpe salta a todos, y +2% de daño"}""")!;
+            var iceDamage = JsonNode.Parse("""{"id":"es_ventisca","familia":"escarcha","desc":"+22% de daño contra enemigos LENTOS"}""")!;
+            run["reliquiaOferta"] = new JsonArray(fire.DeepClone(), slow.DeepClone(), bounce.DeepClone());
             var requests = new List<string>();
+            int relicPicks = 0;
             using var stop = new CancellationTokenSource();
             void Publish() { snapshot["time"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0; J.Write(Path.Combine(Paths.Bridge, "snapshot.json"), snapshot); }
             var service = Task.Run(async () =>
@@ -39,12 +43,17 @@ static class CardFlowTests
                         {
                             var selected = run.At("reliquiaOferta").A().Single(c => c.At("id").S() == command.At("args", "id").S());
                             run["reliquias"]!.AsArray().Add(selected.DeepClone()); run["reliquiaOferta"] = null;
-                            run["blasonPendiente"] = new JsonObject { ["opciones"] = new JsonArray(badge.DeepClone()) };
+                            relicPicks++;
+                            if (relicPicks == 1) run["reliquiaOferta"] = new JsonArray(fire.DeepClone(), freeze.DeepClone(), bounce.DeepClone());
+                            else if (relicPicks == 2) run["reliquiaOferta"] = new JsonArray(fire.DeepClone(), freeze.DeepClone(), iceDamage.DeepClone(), bounce.DeepClone());
+                            else if (relicPicks == 3) run["reliquiaOferta"] = new JsonArray(fire.DeepClone(), iceDamage.DeepClone(), bounce.DeepClone());
+                            else if (relicPicks == 4) run["reliquiaOferta"] = new JsonArray(JsonNode.Parse("""{"id":"au_alba","desc":"Empiezas cada sala con un escudo del 25% de tu vida durante 3 s"}"""));
+                            else run["blasonPendiente"] = new JsonObject { ["opciones"] = new JsonArray(badge.DeepClone()) };
                         }
                         else if (method == "sima.blason")
                         {
                             run["blasones"]!.AsArray().Add(badge.DeepClone()); run["blasonPendiente"] = null;
-                            run["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(slow.DeepClone(), freeze.DeepClone()), ["heredadas"] = 0 };
+                            run["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(fire.DeepClone(), slow.DeepClone(), freeze.DeepClone()), ["heredadas"] = 0 };
                         }
                         else if (method == "sima.guarda")
                         {
@@ -62,34 +71,62 @@ static class CardFlowTests
             try
             {
                 Publish(); var pilot = new Pilot();
-                pilot.Save(new Settings { Simulations = 64, SkipShieldCardsEarly = false });
+                pilot.Save(new Settings { Simulations = 64, SkipShieldCardsEarly = true });
                 async Task Step() => await (Task)typeof(Pilot).GetMethod("Step", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(pilot, [false, CancellationToken.None])!;
                 await Step();
+                check(run.At("reliquias").A().Single().At("id").S() == "es_helada",
+                    "真实Step空开局选择冰减速，不被高火增伤或五次电弹跳抢走");
+                await Step();
                 check(run.At("reliquias").A().Any(c => c.At("id").S() == "es_carambano") && !CardRules.HasInheritedCore(run, pilot.Config),
-                    "真实Step第一选取得冻结但未继承，不提前认定跨章核心成型");
-                check(pilot.Build(snapshot).Single().Label.Contains("本章徽章"), "第二次选择明确标为本章徽章，不冒充可继承遗物");
+                    "真实Step第二选取得冻结但未继承，不提前认定跨章核心成型");
+                await Step();
+                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 2,
+                    "真实Step本章尚未继承时第三选继续取得第二份冻结，不被普通冰伤替代");
+                await Step();
+                check(run.At("reliquias").A().Select(c => c.At("id").S()).SequenceEqual(["es_helada", "es_carambano", "es_carambano", "es_ventisca"]),
+                    "真实Step没有冻结候选时继续选冰伤，不拿非冰增伤");
+                check(pilot.Build(snapshot).Single().Label.Contains("兜底"), "真实Step护盾且非冰的唯一候选启用兜底");
+                await Step();
+                check(run.At("reliquias").A().Any(c => c.At("id").S() == "au_alba"), "真实Step仅剩策略避让护盾仍派发一次并继续到徽章，不暂停");
+                check(pilot.Build(snapshot).Single().Label.Contains("本章徽章"), "后续徽章选择明确标为本章徽章，不冒充可继承遗物");
                 await Step();
                 check(run.At("blasones").A().Any() && !Cards.Project(run, new Choice("next", "sima.guarda", new(), card: freeze)).Any(c => c.At("id").S() == "es4_hielo"),
-                    "第二次取得的徽章不进入继承投影，不以临时效果挤掉冻结名额");
+                    "取得的临时徽章不进入继承投影，不以临时效果挤掉冻结名额");
                 await Step();
                 var session = J.Read(Path.Combine(Paths.Data, "last-session.json"));
                 var review = session.At("chapterReviews").A().Single();
-                check(requests.SequenceEqual(["sima.reliquia", "sima.blason", "sima.guarda"]),
-                    "遗物、徽章、继承三步真实派发；章末重推演仅本地执行不消费资源");
+                check(requests.SequenceEqual(["sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.blason", "sima.guarda"]),
+                    "四次冰遗物（含重复冻结）、一次护盾兜底、徽章、继承七步真实派发；章末重推演仅本地执行不消费资源");
                 check(review.At("freezeInherited").B() && review.At("depth").N() == 1
                     && review.At("relics").A().Select(c => c.S()).SequenceEqual(["es_carambano"])
                     && review.At("prediction", "trials").N() == 64,
                     "继承成功后按下一章确认保留的冻结重新推演64次并落盘，临时徽章已清空");
                 var status = JsonSerializer.SerializeToNode(pilot.Status(), J.Options);
-                check(status.At("cardState", "freezeInherited").B()
+                check(!status.At("cardState", "iceOnly").B() && status.At("cardState", "freezeInherited").B()
                     && status.At("choices").A().Single().At("method").S() == "local.chapterReview",
                     "控制台显示已继承核心和章节复核，不残留上一章继承候选");
+                run["reliquiaOferta"] = new JsonArray(freeze.DeepClone(), bounce.DeepClone(), fire.DeepClone()); Publish();
+                await Step();
+                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 1
+                    && run.At("reliquias").A().Any(c => c.At("id").S() == "fu_cadena"),
+                    "真实Step继承回执确认后停止收集纯冻结，自动选择新增五次弹跳");
+                run["blasonPendiente"] = null; run["reliquias"] = new JsonArray(freeze.DeepClone()); Publish();
                 var repeat = pilot.ReviewChapter(snapshot, CancellationToken.None);
                 snapshot["peeks"]!["start"]!["enemigos"] = JsonNode.Parse("""[{"name":"Stale boss"},{"name":"Stale escort"}]""");
                 run["mapa"]!["nodos"]!["start"]!["tipo"] = "jefe";
                 var repeat2 = pilot.ReviewChapter(snapshot, CancellationToken.None);
                 check(JsonSerializer.Serialize(repeat.Forecast, J.Options) == JsonSerializer.Serialize(repeat2.Forecast, J.Options),
                     "章末复核使用新章普通房间先验，不重打旧Boss，不把深度再加一层");
+                var flame = JsonNode.Parse("""{"id":"br_incendio","familia":"brasa","desc":"Tus autoataques dejan al objetivo ARDIENDO, y +4% de daño"}""")!;
+                run["profundidad"] = 3; run["reliquias"] = JsonNode.Parse("""[{"id":"es_carambano"},{"id":"br_yesca","desc":"Tus autoataques dejan al objetivo ARDIENDO"}]""");
+                run["llegada"] = new JsonObject { ["reliquias"] = 2 };
+                run["reliquiaOferta"] = new JsonArray(
+                    JsonNode.Parse("""{"id":"fu_descarga","desc":"Tus autoataques ELECTRIFICAN al objetivo, y +5% de daño"}"""),
+                    JsonNode.Parse("""{"id":"au_alba","desc":"Empiezas cada sala con un escudo del 10% de tu vida durante 3 s"}"""), flame.DeepClone());
+                pilot.Config.ShieldSkipFloors = 20; Publish();
+                await Step();
+                check(run.At("reliquias").A().Any(c => c.At("id").S() == "br_incendio") && requests.Last() == "sima.reliquia",
+                    "截图回归真实Step自动派发第三张烈焰并确认成功，不暂停等待玩家处理");
                 pilot.Config.Simulations = 0;
                 check(pilot.ReviewChapter(snapshot, CancellationToken.None).Forecast == null, "章节复核尊重关闭抽样，不伪造胜率");
             }

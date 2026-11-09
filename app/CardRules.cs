@@ -6,7 +6,8 @@ namespace FrostAbyss;
 [Flags]
 enum BasicEffect { None = 0, Freeze = 1, Burn = 2, Lightning = 4, Poison = 8, Detonate = 16, Mark = 32, Taunt = 64 }
 
-// Rules apply to the offered effect, never to an entire elemental family.
+// Ice-first acquisition lasts until freeze inheritance is confirmed.
+// After that stage, independent switches apply to effects, not entire families.
 // Known IDs come from saved game receipts; descriptions cover future variants.
 static class CardRules
 {
@@ -68,10 +69,16 @@ static class CardRules
 
     internal static bool HasInheritedCore(JsonNode? run, Settings cfg) => InheritedBaseline(run).Any(c => Cards.IsCore(c, cfg));
 
+    internal static bool SeekingInheritedFreeze(JsonNode? run, Settings cfg) => !HasInheritedCore(run, cfg);
+
+    internal static bool CollectingFreeze(JsonNode card, JsonNode? run, Settings cfg) =>
+        SeekingInheritedFreeze(run, cfg) && Cards.IsCore(card, cfg);
+
     internal static bool AvoidIceAfterCore(JsonNode card, JsonNode? run, Settings cfg)
     {
         if (!HasInheritedCore(run, cfg) || Cards.Family(card) != "escarcha" || AllTargetEvery(card) > 0) return false;
         var fx = Effects.Parse([card], cfg);
+        if (Cards.IsCore(card, cfg) && HasSupplementalValue(card, cfg)) return false;
         // Feedback permits occasional ice shields; do not ban the whole family.
         return !(fx.Shield > 0 && fx.Slow == 0 && fx.VsSlow == 0);
     }
@@ -84,24 +91,38 @@ static class CardRules
         return null;
     }
 
+    // An independent status is boolean, but damage/shield/etc. printed on the
+    // same card can still add value. Never discard the whole mixed card merely
+    // because its burn/freeze/shock already exists.
+    internal static bool HasSupplementalValue(JsonNode card, Settings cfg)
+    {
+        var f = Effects.Parse([card], cfg);
+        return f.Damage > 0 || f.Life > 0 || f.Defense > 0 || f.Speed > 0 || f.Crit > 0 || f.CritDamage > 0
+            || f.Leech > 0 || f.Shield > 0 || f.KillHeal > 0 || f.KillImmune > 0 || f.ReactionDamage > 0
+            || f.VsSlow > 0 || f.VsStatus > 0 || f.VsElite > 0 || f.Execute > 0 || f.RampDefense > 0
+            || f.LowDefense > 0 || f.MarkDeepen > 0 || f.VsMarked > 0;
+    }
+
     internal static string? SkipReason(JsonNode card, JsonNode? run, Settings cfg, string method)
     {
+        if (SeekingInheritedFreeze(run, cfg) && Cards.Family(card) != "escarcha")
+            return "普攻冻结尚未继承，当前阶段优先只选冰系牌（含冰减速），避让其他系列";
         var disabled = DisabledStatus(card, cfg);
         if (disabled != null) return disabled;
         if (HasInheritedCore(run, cfg) && Cards.Family(card) == "escarcha"
             && (Effects.Parse([card], cfg).Slow > 0 || Regex.IsMatch(card.At("descZh").S(), @"(?:普攻|攻击|命中|使目标|造成).{0,16}减速")))
-            return "普攻冻结已继承，不再自动选择冰减速";
-        if (Cards.SkipEarlyShield(card, run, cfg)) return $"前{cfg.ShieldSkipFloors}层暂不选护盾";
+            return "普攻冻结已继承，优先不再选择冰减速";
+        if (Cards.SkipEarlyShield(card, run, cfg)) return $"前{cfg.ShieldSkipFloors}层优先不选护盾";
         var baseline = Baseline(run, method);
         var effect = Applications(card, cfg);
         int bounce = AllTargetEvery(card);
         var held = baseline.Aggregate(BasicEffect.None, (value, c) => value | Applications(c, cfg));
         if (effect.HasFlag(BasicEffect.Detonate) && held.HasFlag(BasicEffect.Detonate))
             return "引爆器已经持有或继承，只需一份，不再重复选择或占用继承名额";
-        if (effect != BasicEffect.None && (effect & ~held) == BasicEffect.None && bounce == 0)
-            return "同类普攻独立效果已经持有，无需重复选择或继承";
+        if (effect != BasicEffect.None && (effect & ~held) == BasicEffect.None && bounce == 0 && !HasSupplementalValue(card, cfg) && !CollectingFreeze(card, run, cfg))
+            return "同类普攻独立效果已经持有，且无已识别的附带增益，优先不重复选择或继承";
         var id = card.At("id").S();
-        if (id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
+        if (!CollectingFreeze(card, run, cfg) && id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
             || method == "sima.guarda" && card.At("llevas").N() >= 3))
             return "同种牌已达三层继承上限，继续拿不会增加效果";
         return null;
@@ -114,7 +135,33 @@ static class CardRules
         int bounce = AllTargetEvery(card), heldBounce = Effects.Parse(baseline, cfg).Cleave;
         var held = baseline.Aggregate(BasicEffect.None, (all, c) => all | Applications(c, cfg));
         bool addsIndependent = (Applications(card, cfg) & ~held) != BasicEffect.None;
-        return copies * 350 + (!addsIndependent && bounce > 0 && heldBounce > 0 && bounce >= heldBounce ? 175 : 0);
+        var applications = Applications(card, cfg);
+        bool repeatedStatusWithValue = applications != BasicEffect.None && !addsIndependent && bounce == 0 && HasSupplementalValue(card, cfg);
+        return copies * 350 + (!addsIndependent && bounce > 0 && heldBounce > 0 && bounce >= heldBounce ? 175 : 0)
+            + (repeatedStatusWithValue ? 600 : 0);
+    }
+
+    // Only game-declared unavailability is never relaxed. Strategy filters
+    // are preferences when a forced menu has no normal candidate.
+    internal static bool Available(JsonNode card) => card.At("id").S() != ""
+        && !(card.At("disponible") is JsonValue d && d.TryGetValue<bool>(out var yes) && !yes)
+        && !(card.At("available") is JsonValue a && a.TryGetValue<bool>(out var ok) && !ok)
+        && !card.At("disabled").B();
+
+    internal static int FallbackPenalty(JsonNode card, JsonNode run, Settings cfg, string method)
+    {
+        var baseline = Baseline(run, method);
+        var effect = Applications(card, cfg);
+        var held = baseline.Aggregate(BasicEffect.None, (all, c) => all | Applications(c, cfg));
+        int penalty = SeekingInheritedFreeze(run, cfg) && Cards.Family(card) != "escarcha" ? 6000 : 0;
+        if (DisabledStatus(card, cfg) != null) penalty += 4000;
+        if (Cards.SkipEarlyShield(card, run, cfg)) penalty += 1000;
+        if (HasInheritedCore(run, cfg) && Cards.Family(card) == "escarcha" && Effects.Parse([card], cfg).Slow > 0) penalty += 1000;
+        if (effect.HasFlag(BasicEffect.Detonate) && held.HasFlag(BasicEffect.Detonate)
+            || effect != BasicEffect.None && (effect & ~held) == BasicEffect.None && AllTargetEvery(card) == 0 && !HasSupplementalValue(card, cfg) && !CollectingFreeze(card, run, cfg)) penalty += 2500;
+        var id = card.At("id").S();
+        if (!CollectingFreeze(card, run, cfg) && (baseline.Count(c => c.At("id").S() == id) >= 3 || method == "sima.guarda" && card.At("llevas").N() >= 3)) penalty += 3500;
+        return penalty;
     }
 
     internal static bool BoostDetonator(Effects fx, Settings cfg) => cfg.AllowBasicBurn && fx.Detonate;

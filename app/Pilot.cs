@@ -70,7 +70,7 @@ sealed class Pilot
             root.Remove("lastBattle"); root.Remove("tacticasCatalogo"); root.Remove("defs");
             foreach (var h in root.At("heroes").A()) foreach (var skill in h.At("skills").A()) if (skill is JsonObject sk) { sk.Remove("conds"); sk.Remove("focusOpts"); sk.Remove("pvpDesc"); }
         }
-        return new { cardState = new { freezeInherited = CardRules.HasInheritedCore(s.At("sima", "run"), Config), inheritedCount = CardRules.InheritedBaseline(s.At("sima", "run")).Length }, active = Active, phase, message, connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, choices = choices.Select(c => new { c.Label, c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = sim.Battles, lastLoss = sim.LastLoss, kind = "冻结时序 + 遗物组合 + 实战校准", caveat = "预测依赖未知敌人属性的假设。区间只反映抽样误差，不包含模型误差。" }, dataPath = Paths.Data, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
+        return new { cardState = new { iceOnly = CardRules.SeekingInheritedFreeze(s.At("sima", "run"), Config), freezeInherited = CardRules.HasInheritedCore(s.At("sima", "run"), Config), inheritedCount = CardRules.InheritedBaseline(s.At("sima", "run")).Length }, active = Active, phase, message, connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, choices = choices.Select(c => new { c.Label, c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = sim.Battles, lastLoss = sim.LastLoss, kind = "冻结时序 + 遗物组合 + 实战校准", caveat = "预测依赖未知敌人属性的假设。区间只反映抽样误差，不包含模型误差。" }, dataPath = Paths.Data, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
     }
     public void Pause() { if (!Active) return; cancel?.Cancel(); phase = "正在暂停"; message = "等待当前操作回执后停止，不会再派发新操作。"; }
     public void Start(bool preview = false, LoopRequest? loop = null)
@@ -106,7 +106,7 @@ sealed class Pilot
             }
             catch (OperationCanceledException) { phase = "已暂停"; message = "当前操作已结束，可继续已有深渊。"; Note("自动流程已暂停"); }
             catch (FinishedException e) { phase = "已完成"; message = e.Message; Note(e.Message); Report(e.Message, e.Cleared); sessionOpen = false; }
-            catch (Exception e) { phase = "需要处理"; message = e.Message; Note(e.Message, "error"); Report(e.Message, false); }
+            catch (Exception e) { phase = "需要处理"; message = e.Message; Note(e.ToString(), "error"); Report(e.Message, false); }
             finally { Volatile.Write(ref running, 0); }
         });
     }
@@ -302,12 +302,16 @@ sealed class Pilot
                 if (b > .0001) shop.Add(new("商店：" + J.Name(service), "sima.trade", new() { ["oferta"] = offer }, b));
             }
             if (run.At("tienda", "precio").N(double.MaxValue) <= obols)
-            foreach (var card in run.At("tienda", "buffs").A())
             {
-                if (CardRules.SkipReason(card, run, Config, "sima.trade") != null || CardRules.AvoidIceAfterCore(card, run, Config)) continue;
-                var bid = "buff:" + card.At("id").S(); var rated = Cards.Rate(card, Config);
-                if (!rated.Allowed || rated.Value < 0 || bought.Contains(id + ":" + bid) || completed.Contains(run.At("id").S() + ":" + id + ":" + bid)) continue;
-                shop.Add(new("商店：" + J.Name(card), "sima.trade", new() { ["oferta"] = bid }, rated.Value, 0, rated.Core, Cards.Priority(card, Config, run, "sima.trade"), card) { Reason = Cards.Reason(card, Config, run, "sima.trade") });
+                var shopOffers = run.At("tienda", "buffs").A().Where(CardRules.Available).Where(card =>
+                {
+                    var bid = "buff:" + card.At("id").S();
+                    return !bought.Contains(id + ":" + bid) && !completed.Contains(run.At("id").S() + ":" + id + ":" + bid);
+                }).ToArray();
+                if (shopOffers.Length > 0)
+                foreach (var choice in CardChoices(shopOffers, "sima.trade", run))
+                    shop.Add(new("商店：" + choice.Label, "sima.trade", new() { ["oferta"] = "buff:" + choice.Card.At("id").S() },
+                        choice.Benefit, choice.Risk, choice.Core, choice.Priority, choice.Card) { Reason = choice.Reason });
             }
             if (shop.Count > 0) { foreach (var dest in run.At("destinos").A()) shop.Add(RouteChoice(run, dest.S(), Config, s)); return shop.ToArray(); }
         }
@@ -362,14 +366,23 @@ sealed class Pilot
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
-        var skipped = cards.Select(c => CardRules.SkipReason(c, run, Config, method)).Where(reason => reason != null).Distinct().ToArray();
-        cards = cards.Where(c => CardRules.SkipReason(c, run, Config, method) == null).ToArray();
-        if (cards.Any(c => !CardRules.AvoidIceAfterCore(c, run, Config)))
+        var offered = cards.Where(CardRules.Available).ToArray();
+        if (offered.Length == 0) throw new Exception("游戏没有实际可选的卡牌，等待状态更新；不会派发不可用选项。");
+        cards = offered.Where(c => CardRules.SkipReason(c, run, Config, method) == null).ToArray();
+        bool fallback = cards.Length == 0;
+        if (fallback) cards = offered;
+        if (!fallback && cards.Any(c => !CardRules.AvoidIceAfterCore(c, run, Config)))
             cards = cards.Where(c => !CardRules.AvoidIceAfterCore(c, run, Config)).ToArray();
         var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择本章徽章（不继承）：" : "选择可继承遗物：";
-        var choices = cards.Select(c => (Card: c, Rating: Cards.Rate(c, Config))).Where(x => x.Rating.Allowed).Select(x => new Choice((x.Rating.Core ? "普攻冻结核心：" : action) + J.Name(x.Card), method, new() { ["id"] = x.Card.At("id").S() }, x.Rating.Value, x.Rating.Value < 0 ? 1 : 0, x.Rating.Core, Cards.Priority(x.Card, Config, run, method), x.Card) { Reason = Cards.Reason(x.Card, Config, run, method) }).ToArray();
-        if (choices.Length == 0) throw new Exception("当前没有符合设置且能增加效果的选牌，已暂停。" + string.Join("；", skipped)
-            + "。原始卡牌保留在游戏中，可手动处理或修改独立开关后继续。");
+        var choices = cards.Select(card =>
+        {
+            var score = Cards.BuildValue(card, Config, run, method, fallback);
+            int penalty = fallback ? CardRules.FallbackPenalty(card, run, Config, method) : 0;
+            var reason = fallback ? "常规策略无候选，按当前构筑择优兜底，不因偏好暂停；原避让：" + CardRules.SkipReason(card, run, Config, method)
+                + $"；兜底扣分{penalty}；" + score.Reason : score.Reason;
+            return new Choice((fallback ? "策略兜底：" : "") + (Cards.IsCore(card, Config) ? "普攻冻结核心：" : action) + J.Name(card),
+                method, new() { ["id"] = card.At("id").S() }, 0, 0, Cards.IsCore(card, Config), score.Priority - penalty, card) { Reason = reason };
+        }).ToArray();
         return choices;
     }
     internal Choice ReviewChapter(JsonNode snapshot, CancellationToken ct)
@@ -377,15 +390,16 @@ sealed class Pilot
         var run = snapshot.At("sima", "run") ?? throw new Exception("章节复核缺少游戏状态。");
         var review = new Choice("章节起点构筑复核", "local.chapterReview", new(), card: new JsonObject())
         { Reason = $"P{run.At("profundidad").N()}按实际保留构筑重新推演：遗物{run.At("reliquias").A().Count()}张、徽章{run.At("blasones").A().Count()}张；"
-            + (CardRules.HasInheritedCore(run, Config) ? "冻结已继承：弹跳、一次独立普攻、一次引爆器、火增伤、其他输出；不再拿冰减速" : "冻结尚未继承，确保先带走普攻冻结；尚无核心时冰系作兜底但不压过弹跳") };
+            + (CardRules.HasInheritedCore(run, Config) ? "冻结已继承：弹跳、一次独立普攻、一次引爆器、火增伤、其他输出；优先避开冰减速" : "普攻冻结尚未继承：当前优先只拿冰系（包括冰减速），无合适候选时择优兜底；本章拿到或临时徽章均不解除，本章已有冻结仍可多拿，章末优先继承一份") };
         sim.Evaluate([review], snapshot, Config, ct);
         return review;
     }
     internal static Choice[] BeforeShopExit(Choice[] candidates, Forecast? baseline)
     {
-        var buys = candidates.Where(c => c.Method == "sima.trade" && (c.Card == null || c.Priority > 0 || baseline == null ||
-            (c.Forecast?.Score ?? 0) >= baseline.Score - .0001)).ToArray();
-        return buys.Length > 0 ? buys : candidates.Where(c => c.Method != "sima.trade").ToArray();
+        var buys = candidates.Where(c => c.Method == "sima.trade" && (c.Card == null || c.Priority > 0 ||
+            baseline != null && c.Forecast != null && c.Forecast.Score >= baseline.Score - .0001)).ToArray();
+        var exits = candidates.Where(c => c.Method != "sima.trade").ToArray();
+        return buys.Length > 0 ? buys : exits.Length > 0 ? exits : candidates;
     }
     internal static double SupplyBenefit(JsonNode run, string offer)
     {
@@ -443,24 +457,7 @@ sealed class Pilot
             && run.At("mapa", "nodos", id, "tipo").S() is "combate" or "elite" or "jefe"
             && !peek.At("enemigos").A().Any();
     }
-    internal Choice[] FightChoices(JsonNode s, JsonNode run, string id)
-    {
-        var enemies = s.At("peeks", id, "enemigos").A().ToArray();
-        // The live run is authoritative after revival. A cached preview can
-        // still omit a revived hero or contain one who has since fallen.
-        var members = run.At("heroes").A().ToArray();
-        var heroes = members.Length > 0 ? members.Where(x => !x.At("caido").B()).ToArray()
-            : s.At("peeks", id, "legion").A().ToArray();
-        if (enemies.Length == 0) return [new("战斗：默认目标", "sima.fight", new() { ["objetivos"] = new JsonObject(), ["desafio"] = false })];
-        var result = new List<Choice>();
-        void Enumerate(int i, JsonObject obj, List<string> labels)
-        {
-            if (i >= heroes.Length) { result.Add(new("战斗：" + string.Join("；", labels), "sima.fight", new() { ["objetivos"] = obj.DeepClone(), ["desafio"] = false })); return; }
-            foreach (var e in enemies) { var name = heroes[i].At("name").S(heroes[i].At("nombre").S()); obj[name] = e.At("name").S(); labels.Add(name + " → " + e.At("name").S()); Enumerate(i + 1, obj, labels); labels.RemoveAt(labels.Count - 1); }
-        }
-        if (Math.Pow(enemies.Length, heroes.Length) > 4096) throw new Exception("目标组合超过 4096 个，暂不自动战斗，请手动处理该房间。");
-        Enumerate(0, new(), []); return result.ToArray();
-    }
+    internal Choice[] FightChoices(JsonNode s, JsonNode run, string id) => TargetRules.Choices(s, run, id, Config.SeparateTargets);
     JsonNode[] Team(JsonNode s)
     {
         return FormationRules.ResolveHeroes(Config.Formation, s);
@@ -505,9 +502,9 @@ sealed class Pilot
         text.AppendLine($"结算资源净变化：核心 {finalCores-initialCores:+0;-0;0}，碎屑 {finalShards-initialShards:+0;-0;0}。暂存战利品与实际结算资源分开统计。\n");
         text.AppendLine($"最高到达深度：{maxDepth}；击败层首领：{clearedFloors}；本段战斗：{wins} 胜 / {losses} 负；普攻冻结核心：{(coreAcquired ? "已取得" : "本段未取得")}。\n");
         if (predictionErrors.Count > 0) text.AppendLine($"本段预测 Brier 分数：{predictionErrors.Average():F4}（越低越好，样本 {predictionErrors.Count} 场）。这只衡量这批已选动作，不能验证未选动作的反事实胜率。\n");
-        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。冻结普攻只拿一份并优先继承，随后依次优先新增或更快全体弹跳、尚未持有的独立普攻效果各一份、引爆器一份、火系增伤与其他增伤；防御少量补充，仍受前X层护盾限制。尚无冻结普攻时冰系作前期兜底，但不压过弹跳；继承后不再自动拿冰减速，尽量避开冰伤。已持有独立普攻效果或引爆器不重复选择和继承，重复数值牌降权。纯电伤清除冻结假设：{Config.LightningConsumesFreeze}（默认关闭，尚未确认服务端规则）。技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执。超时自动恢复：{Config.RetryTimeouts}；最多重试2次，未知结果先只读核验，确认未发出才重发。\n");
-        text.AppendLine($"普攻独立开关：点燃允许 {Config.AllowBasicBurn}，带电允许 {Config.AllowBasicLightning}。只影响对应普攻施加效果，其他火电卡照常比较；允许点燃时提高引爆器权重。\n");
-        text.AppendLine($"前期护盾避让：{Config.SkipShieldCardsEarly}，前 {Config.ShieldSkipFloors} 层；已持有护盾不移除。\n");
+        text.AppendLine($"全程禁止撤离。优先取得可继承的普攻冻结核心；本层徽章不替代可继承核心。冻结未确认继承前可优先多拿；成功继承一份后不再为纯冻结重复拿牌，带弹跳或其他有效增益按权重比较，随后依次优先新增或更快全体弹跳、尚未持有的独立普攻效果各一份、引爆器一份、火系增伤与其他增伤；防御少量补充，前X层优先避开护盾，无合适候选可兜底。普攻冻结尚未确认继承前优先只拿冰系（含冰减速），有合适冰牌时非冰系弹跳和火增伤不抢选；本章已取得或临时徽章冻结不解除此阶段；继承后优先不拿冰减速，尽量避开冰伤。独立普攻不重复加分，但附带增伤仍可降权比较；引爆器优先只留一份。全部选牌策略无合适候选时择优兜底，不因偏好暂停。重复数值牌降权。纯电伤清除冻结假设：{Config.LightningConsumesFreeze}（默认开启，尚未确认服务端规则）。技能调整默认关闭。跳过战斗播放：{(Config.SkipBattleReplay ? "开启" : "关闭")}；本段跳过 {skippedReplays.Count} 次。所有游戏操作等待回执。超时自动恢复：{Config.RetryTimeouts}；最多重试2次，未知结果先只读核验，确认未发出才重发。\n");
+        text.AppendLine($"普攻独立开关：点燃允许 {Config.AllowBasicBurn}，带电允许 {Config.AllowBasicLightning}。冻结继承前优先仅冰系，无合适候选时择优兜底，确认继承后这些开关只影响对应普攻施加效果，其他火电卡照常比较；允许点燃时提高引爆器权重。\n");
+        text.AppendLine($"前期护盾避让：{Config.SkipShieldCardsEarly}，前 {Config.ShieldSkipFloors} 层；无合适候选可兜底选盾，已持有护盾不移除。\n");
         text.AppendLine($"契约避让：前8次受击免疫 {Config.SkipEightHitPact}，15%闪避 {Config.SkipDodgePact}；跳过契约后仍正常战斗，已签约的效果不会撤销。\n");
         text.AppendLine($"奖励路线：有冻结核心且处于前 {Config.RewardFloors} 层时优先战斗，核心资源权重 {Config.CoreRewardWeight}、碎屑权重 {Config.ShardRewardWeight}；之后优先避战：{Config.AvoidCombatAfterRewardFloors}。必经战斗继续执行。\n");
         text.AppendLine("本地预测基于客户端事件与未知属性先验，不是服务端精确战斗模拟。抽样置信区间不包含模型误差，不能宣称全局最高真实胜率。\n");

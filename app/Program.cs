@@ -19,7 +19,12 @@ static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Directory.CreateDirectory(Paths.Data);
-        if (args.Contains("--self-test")) { Environment.Exit(SelfTest.Run(args)); return; }
+        if (args.Contains("--self-test"))
+        {
+            var testRoot = args.SkipWhile(a => a != "--self-test-dir").Skip(1).FirstOrDefault();
+            if (testRoot != null) { Paths.Data = Path.GetFullPath(testRoot); Paths.GameData = Path.Combine(Paths.Data, "game-fixture"); Directory.CreateDirectory(Paths.Data); }
+            Environment.Exit(SelfTest.Run(args)); return;
+        }
         if (args.Contains("--validate-model")) { Environment.Exit(ModelAudit.Run()); return; }
         using var single = new Mutex(true, @"Local\FrostAbyss-Console", out var first);
         if (!first)
@@ -54,7 +59,7 @@ static class Program
                 catch (ObjectDisposedException) { break; }
             }
         });
-        pilot.Note("控制台已启动。先取得一份并继承冻结普攻，再依次优先全体弹跳、独立普攻各一份、引爆器一份、火增伤与其他输出，防御少量补充；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
+        pilot.Note("控制台已启动。冻结普攻继承前优先只拿冰系（含冰减速），本章已有仍可优先多拿，直至章末继承确认；确认继承后再依次优先全体弹跳、独立普攻各一份、引爆器一份、火增伤与其他输出，防御少量补充；无合适候选时择优兜底，不因选牌偏好暂停；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
         if (!args.Contains("--no-browser")) Open(url);
         Application.Run(context); listener.Close(); tray.Visible = false;
         try { File.Delete(Path.Combine(Paths.Data, "console.url")); } catch { }

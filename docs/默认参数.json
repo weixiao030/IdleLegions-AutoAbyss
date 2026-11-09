@@ -1,5 +1,5 @@
 {
-  "simulations": 4096,
+  "simulations": 2000,
   "seed": 73129,
   "delayMs": 1000,
   "startDepth": 0,
@@ -28,7 +28,7 @@
   "avoidFireLightning": true,
   "autoEnter": true,
   "allowElite": true,
-  "allowAmbush": false,
+  "allowAmbush": true,
   "allowNonIceUtility": true,
   "coreCardId": "es2_carambano",
   "gamePath": "",
@@ -40,11 +40,14 @@
   ],
   "loopUntilRopesEmpty": false,
   "preferFreezeBuild": true,
-  "avoidEliteIds": [],
-  "lightningConsumesFreeze": false,
+  "avoidEliteIds": [
+    "sg_alferez"
+  ],
+  "lightningConsumesFreeze": true,
   "retryTimeouts": true,
   "skipShieldCardsEarly": true,
   "shieldSkipFloors": 7,
   "allowBasicBurn": true,
-  "allowBasicLightning": false
+  "allowBasicLightning": false,
+  "separateTargets": true
 }

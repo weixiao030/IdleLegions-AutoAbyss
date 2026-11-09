@@ -22,7 +22,9 @@ sealed class Bridge
                 // see a brief sharing/rename failure; retain the last valid frame.
                 var next = J.Read(Path.Combine(Paths.Bridge, "snapshot.json"));
                 if (next != null) lastGood = next;
-                return lastGood;
+                // Each caller owns its tree. Status rendering and simulation must not
+                // materialize or enumerate the same lazily parsed JsonNode.
+                return lastGood?.DeepClone();
             }
         }
     }

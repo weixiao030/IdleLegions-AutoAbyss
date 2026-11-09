@@ -53,7 +53,8 @@ static class StrategyTests
         run["guardaPendiente"]!["cartas"]![0]!["llevas"] = 1;
         check(P(shield, "sima.guarda") < P(poison, "sima.guarda"), "已有继承盾后优先异常增伤，高级盾仍为合法补充");
 
-        check(cfg.AvoidEliteIds.Length == 0 && EliteRules.Catalog.Length == 22, "精英多选默认空名单，清单包含22种已核对精英");
+        check(cfg.AvoidEliteIds.SequenceEqual(["sg_alferez"]) && EliteRules.Catalog.Length == 22, "精英多选默认陪葬旗官，清单包含22种已核对精英");
+        cfg.AvoidEliteIds = []; // Explicit empty-list case; new default is tested above.
         var allElites = new Settings { AvoidEliteIds = EliteRules.Catalog.Select(e => e.Id).ToArray() }; allElites.Validate();
         check(EliteRules.Catalog.All(e => EliteRules.Avoided(new JsonObject { ["enemigos"] = new JsonArray(new JsonObject { ["char"] = e.Id }) }, allElites).Single().Id == e.Id), "资料站全部22种精英的真实char逐项匹配通过，不仅陪葬旗官");
         check(EliteRules.Catalog.All(e => EliteRules.Avoided(new JsonObject { ["planta"] = e.Hall == 10 ? 0 : e.Hall, ["enemigos"] = new JsonArray(new JsonObject { ["variant"] = e.Variant }) }, allElites).Single().Id == e.Id), "22种精英的大厅变体回退逐项匹配通过，包含两种伏击精英");
@@ -94,11 +95,11 @@ static class StrategyTests
             var localized=Card("future_burn","brasa",""); localized["descZh"]="普攻使敌人燃烧";
             foreach(var method in new[]{"sima.reliquia","sima.blason","sima.guarda"})
             {
-                var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,new JsonObject());
-                check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"按独立开关排除普攻点燃带电，关闭构筑偏好仍有效，电系弹跳允许");
+                var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,run);
+                check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"按独立开关排除普攻点燃带电，关闭构筑偏好仍有效，已继承冻结后电系弹跳允许");
             }
-            bool noUnsafeFallback=false; try {pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());} catch(Exception e){noUnsafeFallback=e.Message.Contains("没有符合");}
-            check(noUnsafeFallback,"只有禁牌时明确暂停，不以fallback选中禁牌");
+            var fallback=pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());
+            check(fallback.Length==prohibited.Length && fallback.All(c=>c.Label.Contains("兜底")),"只有策略避让牌时恢复实际候选并记录兜底，不暂停");
             var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_carambano"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
             store["sima"]!["run"]!["tienda"]!["buffs"]=new JsonArray(prohibited.Append(described).Append(shield).Select(c=>c.DeepClone()).ToArray());
             cfg.AllowBasicBurn=false; pilot.Save(cfg);

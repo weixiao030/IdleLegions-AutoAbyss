@@ -117,11 +117,11 @@ static class SelfTest
             Assert(!Pilot.NeedsPeek(mist, changedRoom, "3_0"), "正常迷雾空预览不重复请求");
             changedRoom["mapa"]!["nodos"]!["3_0"]!["tipo"] = "combate";
             mist["peeks"]!["3_0"] = JsonNode.Parse("{\"enemigos\":[{\"name\":\"A\"},{\"name\":\"B\"},{\"name\":\"C\"},{\"name\":\"D\"}],\"legion\":[{\"name\":\"Berserker\"},{\"name\":\"Arquera\"}]}");
-            Assert(!Pilot.NeedsPeek(mist, changedRoom, "3_0") && new Pilot().FightChoices(mist, changedRoom, "3_0").Length == 16, "刷新后四敌两存活英雄枚举十六种目标组合");
+            Assert(!Pilot.NeedsPeek(mist, changedRoom, "3_0") && new Pilot().FightChoices(mist, changedRoom, "3_0").Length == 12, "刷新后四敌两存活英雄枚举十二种分别锁定组合");
             var ice = JsonNode.Parse("{\"id\":\"es2_carambano\",\"familia\":\"escarcha\",\"desc\":\"Tus golpes básicos congelan\"}")!;
             var fire = JsonNode.Parse("{\"id\":\"fixture_fire\",\"familia\":\"brasa\"}")!;
             var utility = JsonNode.Parse("{\"id\":\"fixture_util\",\"familia\":\"aurora\",\"desc\":\"+10% vida\"}")!;
-            Assert(Cards.IsCore(ice, cfg) && Cards.Priority(ice,cfg) == 2000 && Cards.Priority(utility,cfg) == 100, "缺核心时核心优先，其他系列按构筑优先级比较");
+            Assert(Cards.IsCore(ice, cfg) && Cards.Priority(ice,cfg) == 2000 && Cards.Priority(utility,cfg) == -10000, "冻结继承前核心优先，其他系列不能进入候选");
             Assert(Cards.IsCore(JsonNode.Parse("{\"id\":\"es2_carambano\",\"desc\":\"Tus autoataques CONGELAN al objetivo\"}"), cfg), "识别真实核心徽章 es2_carambano");
             Assert(!Cards.IsCore(JsonNode.Parse("{\"id\":\"es_otro\",\"desc\":\"Tus autoataques hacen más daño contra congelados\"}"), cfg), "不把对冻结增伤误认为普攻冻结核心");
             Assert(Cards.IsCore(JsonNode.Parse("{\"id\":\"fixture_advanced\",\"familia\":\"escarcha\",\"desc\":\"Tus autoataques CONGELAN al objetivo, cada 5 ataques salta a todos\"}"), cfg), "识别带普攻冻结的强化弹射效果");
@@ -200,7 +200,7 @@ static class SelfTest
                 var a = new Choice("ice", "sima.reliquia", new() { ["id"] = "fixture_ice" }, card: ice);
                 var b = new Choice("damage", "sima.reliquia", new() { ["id"] = "fixture_damage" }, card: JsonNode.Parse("{\"desc\":\"+40% de daño\"}"));
                 model.Evaluate([a, b], snapshot, cfg, CancellationToken.None);
-                Assert(a.Forecast is { Trials: 4096 } && b.Forecast is { Trials: 4096 }, "实机快照每候选实际运行 4096 次组合模型");
+                Assert(a.Forecast is { Trials: 2000 } && b.Forecast is { Trials: 2000 }, "实机快照每候选实际运行 2000 次组合模型");
                 var previous = a.Forecast; model.Evaluate([a], snapshot, cfg, CancellationToken.None);
                 Assert(System.Text.Json.JsonSerializer.Serialize(a.Forecast,J.Options) == System.Text.Json.JsonSerializer.Serialize(previous,J.Options), "相同种子可重现推演结果");
                 using var ct = new CancellationTokenSource(); ct.Cancel(); rejected = false;
@@ -208,7 +208,7 @@ static class SelfTest
                 Assert(rejected, "本地推演响应暂停取消");
             }
             var synthetic = JsonNode.Parse("{\"sima\":{\"run\":{\"nodo\":\"1\",\"profundidad\":0,\"mapa\":{\"nodos\":{\"1\":{\"fila\":1,\"tipo\":\"combate\"}}},\"heroes\":[{\"id\":\"hero\",\"nombre\":\"Hero\",\"hp\":1000,\"hpMax\":1000,\"anima\":100}],\"reliquias\":[]}},\"heroes\":[{\"id\":\"hero\",\"nombre\":\"Hero\",\"stats\":{\"hp\":1000,\"atk\":100,\"spd\":1,\"crit\":0}}],\"peeks\":{\"1\":{\"enemigos\":[{\"char\":\"test\",\"name\":\"Enemy\",\"foco\":\"front\"}]}}}")!;
-            var local = new Simulation(false); var fastCfg = new Settings { Simulations=2000, ModelUncertainty=.5 };
+            var local = new Simulation(false); var fastCfg = new Settings { Simulations=2000, ModelUncertainty=.5, LightningConsumesFreeze=false };
             var baseChoice=new Choice("base","sima.fight",new());
             var freezeChoice=new Choice("core","sima.reliquia",new(),card:ice);
             local.Evaluate([baseChoice,freezeChoice],synthetic,fastCfg,CancellationToken.None);
@@ -247,8 +247,12 @@ static class SelfTest
             var meditate=new Choice("meditate","sima.rest",new(){["opcion"]="meditar"});
             local.Evaluate([sharpen,meditate],synthetic,fastCfg,CancellationToken.None);
             Assert(sharpen.Forecast!.Duration<meditate.Forecast!.Duration,"满血满魂时磨利强化会缩短后续战斗，而非永远选无收益冥想");
+            SimulationSafetyTests.Run(Assert).GetAwaiter().GetResult();
             StrategyTests.Run(Assert);
             CardSelectionTests.Run(Assert);
+            IceOpeningTests.Run(Assert);
+            FreezeCollectionTests.Run(Assert);
+            FallbackSelectionTests.Run(Assert);
             CardFlowTests.Run(Assert).GetAwaiter().GetResult();
             ResilienceTests.Run(Assert).GetAwaiter().GetResult();
             J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = true, checks }); return 0;

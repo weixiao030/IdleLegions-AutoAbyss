@@ -44,7 +44,7 @@ static class J
 
 sealed class Settings
 {
-    public int Simulations { get; set; } = 4096;
+    public int Simulations { get; set; } = 2000;
     public int Seed { get; set; } = 73129;
     public int DelayMs { get; set; } = 1000;
     public int StartDepth { get; set; } = 0;
@@ -78,11 +78,12 @@ sealed class Settings
     public bool AllowBasicBurn { get; set; } = true;
     public bool AllowBasicLightning { get; set; } = false;
     public bool AvoidFireLightning { get; set; } = true;
-    public bool LightningConsumesFreeze { get; set; } = false;
+    public bool LightningConsumesFreeze { get; set; } = true;
     public bool AutoEnter { get; set; } = true;
     public bool AllowElite { get; set; } = true;
-    public string[] AvoidEliteIds { get; set; } = [];
-    public bool AllowAmbush { get; set; } = false;
+    public string[] AvoidEliteIds { get; set; } = ["sg_alferez"];
+    public bool AllowAmbush { get; set; } = true;
+    public bool SeparateTargets { get; set; } = true;
     public bool AllowNonIceUtility { get; set; } = true;
     public string CoreCardId { get; set; } = "es2_carambano";
     public string GamePath { get; set; } = "";

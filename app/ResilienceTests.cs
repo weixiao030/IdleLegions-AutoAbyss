@@ -106,8 +106,8 @@ static class ResilienceTests
             check(!pilot.Build(shop).Any(c => c.Card.At("id").S() == "au_alba"), "前7层商店不买护盾");
             sr["profundidad"] = 7;
             check(pilot.Build(shop).Any(c => c.Card.At("id").S() == "au_alba"), "P7商店恢复护盾购买");
-            var onlyShield = false; try { pilot.CardChoices([shield], "sima.reliquia", firstShield); } catch (Exception e) { onlyShield = e.Message.Contains("护盾"); }
-            check(onlyShield, "强制选牌只剩护盾时明确暂停，不偷偷违反避让");
+            var onlyShield = pilot.CardChoices([shield], "sima.reliquia", firstShield).Single();
+            check(onlyShield.Card.At("id").S() == "au_alba" && onlyShield.Label.Contains("兜底"), "强制选牌只剩护盾时择优兜底，不因护盾偏好暂停");
             cfg.ShieldSkipFloors = 0; pilot.Save(cfg);
             check(pilot.CardChoices([shield], "sima.reliquia", firstShield).Length == 1, "护盾跳过层数0关闭过滤");
             cfg.ShieldSkipFloors = 2; pilot.Save(cfg);
