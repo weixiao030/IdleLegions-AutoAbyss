@@ -1,0 +1,17 @@
+ui/node_modules/
+ui/dist/
+app/bin/
+app/obj/
+release/
+artifacts/
+output/
+backups/
+evidence/
+.tools/
+.playwright*/
+*.log
+*.tmp
+*.user
+*.zip
+*.zip.sha256
+.DS_Store

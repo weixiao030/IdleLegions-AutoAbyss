@@ -1,0 +1,41 @@
+/* Preserve the Radix console: variance 4, motion 2, density 5.
+   One cyan accent. Panels 12px, controls 8px. No decorative motion. */
+.radix-themes{--support-accent:#126878;--support-tint:#e6f1f3}
+.radix-themes.dark{--support-accent:#83d5df;--support-tint:#1a3037}
+.brand{gap:10px;margin-left:4px;margin-right:0;font-size:17px;letter-spacing:-.4px}
+.brand-mark{flex-shrink:0}
+.brand-sub{font-size:12px;letter-spacing:2px;margin-top:5px}
+.breadcrumb .breadcrumb-brand,.breadcrumb .breadcrumb-view{opacity:1}
+.project-support{display:grid;grid-template-columns:minmax(0,1fr) 324px;gap:36px;margin-top:24px;padding:32px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.project-info{align-self:center;min-width:0;padding:4px 0}
+.support-mark{display:grid;place-items:center;width:48px;height:48px;margin-bottom:24px;border-radius:12px;background:var(--support-tint);color:var(--support-accent)}
+.project-info h2{font-size:25px;line-height:1.45;letter-spacing:-.5px;font-weight:650}
+.free-notice{max-width:35em;margin-top:15px;font-size:15px;line-height:1.95;color:var(--ink)}
+.source-address{display:grid;gap:9px;margin-top:28px;padding-top:23px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.source-address a{display:flex;align-items:flex-start;gap:8px;width:fit-content;max-width:100%;font-size:13px;line-height:1.8;font-weight:550;color:var(--support-accent);text-decoration:underline;text-decoration-color:currentColor;text-underline-offset:4px;overflow-wrap:anywhere}
+.source-address a svg{flex-shrink:0;margin-top:3px}
+.source-address a:hover{text-decoration-thickness:2px}
+.support-description{font-size:12px;line-height:1.9;color:var(--muted);margin-top:24px;max-width:32em}
+.appreciation{min-width:0;margin:0;padding:22px;background:var(--tint);border:1px solid var(--line);border-radius:12px;text-align:center}
+.appreciation-heading{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:17px;color:var(--support-accent)}
+.appreciation-heading h3{font-size:13px;font-weight:600}
+.appreciation-preview{display:block;width:100%;max-width:278px;margin:0 auto;padding:0;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#fdfdfd;cursor:zoom-in}
+.appreciation-preview img{display:block;width:100%;height:auto;aspect-ratio:1;object-fit:contain}
+.appreciation-preview:hover{border-color:var(--support-accent)}
+.appreciation-preview:active{transform:scale(.99)}
+.appreciation-note{font-size:12px;line-height:1.9;color:var(--ink);margin-top:17px;text-wrap:pretty}
+.appreciation-download{display:inline-flex;align-items:center;justify-content:center;gap:6px;margin-top:13px;padding:6px 8px;border-radius:8px;color:var(--support-accent);font-size:12px;line-height:1.5;text-decoration:none}
+.appreciation-download:hover{background:var(--surface);text-decoration:underline;text-underline-offset:3px}
+.appreciation-download:active{transform:scale(.98)}
+.appreciation-error{display:grid;place-items:center;min-height:230px;font-size:13px;line-height:1.9;color:var(--ink)}
+.appreciation-dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:9px}
+.appreciation-dialog-heading h1{font-size:20px;margin:0}
+.dialog-close{display:grid;place-items:center;flex-shrink:0;width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px;color:var(--ink);background:var(--surface)}
+.dialog-close:hover{background:var(--tint)}
+.appreciation-original{display:block;width:100%;height:auto;aspect-ratio:1;object-fit:contain;margin:18px 0;border:1px solid var(--line);border-radius:8px}
+.rt-Button:active:not(:disabled){transform:scale(.98)}
+@media(max-width:1180px){.brand{font-size:14px;gap:8px}.brand-mark{width:32px}.brand-sub{font-size:11px}.project-support{grid-template-columns:minmax(0,1fr) 288px;gap:25px;padding:25px}.appreciation{padding:18px}.project-info h2{font-size:23px}}
+@media(max-width:767px){.project-support{grid-template-columns:minmax(0,1fr);gap:25px;padding:24px}.project-info{padding:0}.support-mark{margin-bottom:18px}.project-info h2{font-size:23px}.free-notice{font-size:14px}.appreciation{width:100%;max-width:360px;justify-self:center;padding:22px}.source-address{margin-top:22px}.breadcrumb{white-space:nowrap;font-size:11px}.breadcrumb>span:not(.breadcrumb-brand){display:none}}
+@media(max-width:640px){.brand{margin:0}.project-support{padding:22px 18px}.source-address a{font-size:12px}.appreciation{padding:18px}.support-description{margin-top:18px}.appreciation-dialog{padding:20px!important}}
+
+.rt-CalloutRoot .text-link{color:inherit}

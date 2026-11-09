@@ -1,2 +1,58 @@
-# IdleLegions-AutoAbyss
-IdleLegions全自动下井
+# IdleLegions自动下井
+
+免费的 Idle Legions 自动下井工具，提供中文网页控制台、本地推演、冻结构筑和循环下潜。适用于 Windows 10 / 11 64 位与 Steam 版 Idle Legions。
+
+**该软件免费并开源，如果是付费购买请前往退款**
+
+开源地址: https://github.com/weixiao030/IdleLegions-AutoAbyss
+
+## 下载与使用
+
+在仓库的 **Releases** 中下载 `IdleLegions-AutoAbyss-v1.0.0-win-x64.zip`，解压后双击 **IdleLegions自动下井.exe**。发行包自带 .NET 运行环境，无需安装 Node.js、Python 或 .NET。
+
+1. 正常关闭游戏，在网页的「连接设置」安装桥接。
+2. 启动游戏并登录，等待显示「游戏已连接」。未自动找到游戏时，填写 `client.exe` 的完整路径并保存。
+3. 按需设置参数，选择单次下潜、循环指定次数或循环到绳索用完。
+
+默认优先延续普攻冻结核心，再选暴击、暴伤、伤害和弹跳；前 7 层有冻结效果时偏向核心与碎屑奖励。默认持续下潜到最深或战败，禁止撤离。完整配置与恢复方式见 [使用说明](docs/使用说明.md)。
+
+关闭网页后程序仍在系统托盘运行，可从托盘打开控制台、暂停或退出。
+
+## 免费与赞赏
+
+连接设置中可查看、放大和保存作者赞赏码。
+
+**无论是否打赏都不影响使用，全部免费,感谢板板支持**
+
+<img src="ui/public/appreciation-code.webp" alt="作者微信赞赏码" width="280" height="280">
+
+## 从源码构建
+
+需要 Windows、.NET 8 SDK、Node.js 22 和 Python 3。前端使用 React、官方 Radix Themes 和 Phosphor Icons。
+
+```powershell
+./build.ps1
+python tools/package_release.py
+```
+
+EXE 位于 `release/IdleLegions自动下井.exe`，发行 ZIP 和 SHA-256 清单位于 `artifacts/`。`build.ps1` 会安装锁定的 npm 依赖、构建前端并将前端及桥接嵌入自包含 EXE。
+
+运行已有策略自测：
+
+```powershell
+$test = Start-Process -FilePath './release/IdleLegions自动下井.exe' -ArgumentList '--self-test' -Wait -PassThru
+if ($test.ExitCode -ne 0) { throw '自测失败' }
+Get-Content "$env:LOCALAPPDATA/FrostAbyss/self-test.json"
+```
+
+为兼容已有用户，参数及桥接仍保存在原来的 `FrostAbyss` / `frost_abyss` 目录。
+
+## 测试与边界
+
+1.0 更新包括品牌更名、免费开源说明与赞赏区。策略沿用 0.4.3。1.0 的构建与界面检查见 [发布验证](docs/发布验证-1.0.md)，旧版真实下潜结果见 [0.4.3 历史实测报告](docs/历史实测报告-v0.4.3.md)。
+
+胜率是本地模型的估计，实际战斗与资源消耗以游戏结算为准。模型并非完整服务端引擎，已知边界见 [模型说明](docs/模型说明.md)。
+
+## 开源许可
+
+项目使用 [Apache License 2.0](LICENSE)，第三方组件见 [第三方组件说明](docs/第三方组件.txt)。游戏商标和内容归其权利人所有。
