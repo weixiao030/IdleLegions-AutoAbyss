@@ -13,7 +13,7 @@ sealed class Effects
     public double Slow, SlowSeconds, VsSlow, VsStatus, VsElite, Execute, ExecuteAt, RampDefense, RampCap, LowDefense, LowAt;
     public double Mark, MarkDeepen, VsMarked;
     public int MarkCap, Cleave;
-    public bool Freeze, Burn, Lightning, Poison, Taunt, ConsumesStatus;
+    public bool Freeze, Burn, Lightning, Poison, Taunt, ConsumesStatus, Detonate;
     public List<string> Unknown = [];
     internal static string Normalize(string s) => new(s.Normalize(NormalizationForm.FormD).Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).ToArray());
     static double Read(string s, string regex, int group = 1)
@@ -26,11 +26,20 @@ sealed class Effects
         var e = new Effects();
         foreach (var c in cards)
         {
-            var t = Normalize(c.At("desc").S()).ToLowerInvariant();
-            e.Freeze |= Cards.IsCore(c, cfg);
-            if (t == "") { e.Unknown.Add(c.At("id").S()); continue; }
             var before = e.Signature();
-            e.Damage += Read(t, @"\+" + Num + @"% de dano(?! contra| critico| de tus reacciones)") / 100;
+            var t = Normalize(c.At("desc").S()).ToLowerInvariant();
+            var applications = CardRules.Applications(c, cfg);
+            e.Freeze |= applications.HasFlag(BasicEffect.Freeze);
+            e.Burn |= applications.HasFlag(BasicEffect.Burn);
+            e.Lightning |= applications.HasFlag(BasicEffect.Lightning);
+            e.Poison |= applications.HasFlag(BasicEffect.Poison);
+            e.Detonate |= applications.HasFlag(BasicEffect.Detonate);
+            e.ConsumesStatus |= applications.HasFlag(BasicEffect.Detonate);
+            e.Taunt |= applications.HasFlag(BasicEffect.Taunt);
+            int bounce = CardRules.AllTargetEvery(c);
+            if (bounce > 0) e.Cleave = e.Cleave == 0 ? bounce : Math.Min(e.Cleave, bounce);
+            if (t == "") { if (e.Signature() == before) e.Unknown.Add(c.At("id").S()); continue; }
+            e.Damage += Read(t, @"\+" + Num + @"% de dano(?! contra| critico| de tus reacciones| recibido)") / 100;
             e.Life += Read(t, @"\+" + Num + @"% de vida") / 100;
             e.Defense += Read(t, @"\+" + Num + @"% de defensa") / 100;
             e.Speed += Read(t, @"\+" + Num + @"% de velocidad de ataque") / 100;
@@ -54,11 +63,6 @@ sealed class Effects
             var ramp = Read(t, @"te suma " + Num + @"% de defensa");
             if (ramp > 0) { e.RampDefense += ramp / 100; e.RampCap += Read(t, @"hasta \+" + Num + @"%") / 100; }
             if (t.Contains("defensa sube")) { e.LowAt = Math.Max(e.LowAt, Read(t, @"(?:por debajo del|bajo el) " + Num + @"%") / 100); e.LowDefense += Read(t, @"defensa sube un " + Num + @"%") / 100; }
-            int cleave = (int)Read(t, @"cada " + Num + @" (?:autoataques|tu golpe|saltan)");
-            if (cleave > 0 && (t.Contains("salta a todos") || t.Contains("saltan a todos"))) e.Cleave = e.Cleave == 0 ? cleave : Math.Min(e.Cleave, cleave);
-            e.Burn |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*(?:queman|encienden|ardiendo|arden)");
-            e.Lightning |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*(?:electrocutan|electrifican)");
-            e.Poison |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*envenenan");
             e.ConsumesStatus |= t.Contains("consumen el estado");
             bool markSource = t.Contains("golpes marcan") || t.Contains("marcas (+");
             double mark = Read(t, @"\+" + Num + @"%(?: de dano recibido)? por marca") / 100;
@@ -71,7 +75,7 @@ sealed class Effects
         }
         return e;
     }
-    string Signature() => $"{Damage},{Life},{Defense},{Speed},{Crit},{CritDamage},{Leech},{Shield},{KillHeal},{KillImmune},{ReactionDamage},{Slow},{SlowSeconds},{VsSlow},{VsStatus},{VsElite},{Execute},{ExecuteAt},{RampDefense},{RampCap},{LowDefense},{LowAt},{Cleave},{Freeze},{Burn},{Lightning},{Poison},{Taunt},{ConsumesStatus},{Mark},{MarkDeepen},{MarkCap},{VsMarked}";
+    string Signature() => $"{Damage},{Life},{Defense},{Speed},{Crit},{CritDamage},{Leech},{Shield},{KillHeal},{KillImmune},{ReactionDamage},{Slow},{SlowSeconds},{VsSlow},{VsStatus},{VsElite},{Execute},{ExecuteAt},{RampDefense},{RampCap},{LowDefense},{LowAt},{Cleave},{Freeze},{Burn},{Lightning},{Poison},{Taunt},{ConsumesStatus},{Detonate},{Mark},{MarkDeepen},{MarkCap},{VsMarked}";
     public double Outgoing(bool slow, bool status, double hp, bool elite = false) => (1 + Damage) * (1 + (slow ? VsSlow : 0) + (status ? VsStatus : 0) + (elite ? VsElite : 0) + (hp < ExecuteAt ? Execute : 0));
 }
 
@@ -99,18 +103,10 @@ static class Cards
         return new[] { "tus autoataques congelan", "tus golpes básicos congelan", "tus autos congelan", "普攻使目标冻结", "普攻会冻结", "普攻冻结敌人" }.Any(effect.Contains);
     }
     public static JsonNode[] Current(JsonNode? run) => run.At("reliquias").A().Concat(run.At("blasones").A()).Concat(run.At("buffs").A()).ToArray();
-    public static bool Forbidden(JsonNode c)
-    {
-        // IDs remain effective when the server omits descriptions. Match effects
-        // too, so future cards and badges cannot bypass the fixed build rule.
-        if (c.At("id").S() is "br_yesca" or "br_incendio" or "fu_descarga" or "fu_tormenta") return true;
-        var text = Effects.Normalize(c.At("desc").S() + " " + c.At("descZh").S() + " " + c.At("description").S()).ToLowerInvariant();
-        return Regex.IsMatch(text, @"(?:autoataques|autos|golpes).{0,100}(?:queman|encienden|ardiendo|arden|electrocutan|electrifican)")
-            || Regex.IsMatch(text, @"(?:basic attacks?|auto[ -]?attacks?)\s+(?:(?:will|now|also|can)\s+)*(?:ignite|electrif\w*|shock\b|(?:apply|inflict|cause)\w* (?:burn|shock|electri)|leave.{0,30}burning)")
-            || Regex.IsMatch(text, @"(?:普攻|普通攻击|基础攻击).{0,30}(?:点燃|燃烧|灼烧|带电|触电|通电)");
-    }
     public static JsonNode[] Inherited(JsonNode run)
     {
+        // Absence from the carry menu does not make a newly acquired relic inherited.
+        if (CardRules.ArrivalBaseline(run) is { } arrival) return arrival;
         // The offer list contains this floor's candidates, not all prior relics.
         // Entries absent from it are already inherited. For repeated IDs the
         // server's llevas is the prior stack count, independent of this floor.
@@ -123,50 +119,54 @@ static class Cards
     // A temporary badge cannot replace a core or shield that must survive the floor.
     internal static (int Priority, string Reason) BuildValue(JsonNode c, Settings cfg, JsonNode? run, string method)
     {
-        var baseline = method == "sima.guarda" && run != null ? Inherited(run)
-            : method is "sima.reliquia" or "sima.trade" ? run.At("reliquias").A().ToArray() : Current(run);
+        var baseline = CardRules.Baseline(run, method);
         var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);
+        var skip = CardRules.SkipReason(c, run, cfg, method);
+        if (skip != null) return (-10000, skip);
         bool core = IsCore(c, cfg), missingCore = !baseline.Any(x => IsCore(x, cfg));
+        bool inheritedCore = CardRules.HasInheritedCore(run, cfg);
         bool advanced = c.At("id").S() == "es_glaciar" || core && fx.Cleave is > 0 and <= 5;
+        int penalty = CardRules.RepeatPenalty(c, baseline, cfg);
+        (int, string) Score(int priority, string reason) => (priority - penalty,
+            reason + (penalty > 0 ? "；已有同牌或同档弹跳，降低重复优先级，优先补不同增伤" : ""));
         if (missingCore && core) return (advanced ? 2200 : 2000, method == "sima.guarda"
-            ? "先保留普攻冻结核心，保证下一层仍能冻结；传说冻结加五次弹跳最优"
-            : "先拿可继承的普攻冻结核心；传说冻结加五次弹跳最优，本层徽章不替代它");
-        if (!cfg.PreferFreezeBuild) return (0, "按模拟收益比较");
-        // Only actual state-consuming attacks conflict with freeze. Family labels
-        // do not disqualify fire status damage or lightning cleave.
-        if (cfg.AvoidFireLightning && fx.ConsumesStatus)
-            return (-100, "明确消耗目标状态的效果降低优先级；普攻点燃与带电始终禁止");
-        if (advanced && !baseline.Any(x => x.At("id").S() == "es_glaciar" || IsCore(x, cfg) && Effects.Parse([x], cfg).Cleave is > 0 and <= 5))
-            return (2100, "升级为传说普攻冻结加每五次攻击弹跳");
-        string family = Family(c);
-        if (missingCore && family == "escarcha") return (1000, "缺可继承冻结核心：先积累寒冷，优先减速、减速增伤和弹跳");
-        if (!missingCore && fx.Shield > 0 && held.Shield == 0)
-            return (1600, "已有冻结核心：先补开局护盾并继承，防止进房间时暴毙");
-        // Secure one opening shield, then build damage. Repeated shields must
-        // not outrank every useful attack or bounce for the rest of the run.
+            ? "第一优先继承普攻冻结，保证下一层仍能结冰；临时徽章不能替代"
+            : "第一优先取得可继承普攻冻结，随后优先把它带到下一层");
+        if (CardRules.AvoidIceAfterCore(c, run, cfg))
+            return Score(-500, "已继承冻结，优先避开冰伤；仅在强制选牌没有其他合法选项时补充，冰减速仍禁止");
+        if (!cfg.PreferFreezeBuild) return Score(0, "按模拟收益比较；独立开关、重复效果与冰系选择规则仍生效");
+        if (cfg.AvoidFireLightning && fx.ConsumesStatus && !CardRules.BoostDetonator(fx, cfg))
+            return Score(-100, "消耗目标状态且未启用点燃搭配，降低优先级");
         if (fx.Cleave > 0 && (held.Cleave == 0 || fx.Cleave < held.Cleave))
-            return (1550, "优先补充或加快普攻弹跳，冰毒电火均可；不选普攻点燃或带电");
-        if (fx.VsSlow > 0 && (!missingCore || held.Slow > 0))
-            return (1450, "优先减速目标增伤，冻结也能满足模型中的减速条件");
-        if (fx.VsStatus > 0)
-            return (1430, "优先异常状态增伤，提高冻结期间的输出");
-        if (fx.Slow > held.Slow && held.Slow == 0)
-            return (1400, "补一个减速来源，已有减速后不重复抢攻击名额");
+            return Score(1950 - Math.Min(50, fx.Cleave), "冻结之后优先新增或更快的普攻全体弹跳；同档优先触发间隔更短，各元素弹跳均可");
+        if (!inheritedCore && missingCore && Family(c) == "escarcha")
+            return Score(1875, "尚无冻结核心时冰系作前期兜底，但不压过冻结普攻和全体弹跳；拿到冻结后不再继续堆冰");
+        string family = Family(c);
+        var applications = CardRules.Applications(c, cfg);
+        var heldApplications = baseline.Aggregate(BasicEffect.None, (all, card) => all | CardRules.Applications(card, cfg));
+        var newIndependent = applications & ~heldApplications & ~(BasicEffect.Freeze | BasicEffect.Detonate);
+        if (inheritedCore && newIndependent != BasicEffect.None)
+            return Score(1900, "弹跳之后补尚未持有的普攻独立效果，各拿一次并继承；仍遵守点燃与带电开关");
+        if (inheritedCore && CardRules.BoostDetonator(fx, cfg))
+            return Score(1850, "独立普攻效果之后优先引爆器，再补火增伤；引爆器已有不重复拿");
+        if (family == "brasa" && (fx.Damage > 0 || fx.Speed > 0 || fx.Crit > 0 || fx.CritDamage > 0
+            || fx.ReactionDamage > 0 || fx.VsStatus > 0 || fx.Execute > 0 || fx.VsElite > 0))
+            return Score(1800, "弹跳、一次独立普攻和引爆器之后优先火系增伤；关闭普攻点燃不屏蔽其他火牌");
+        if (fx.VsStatus > 0 || fx.VsSlow > 0 || fx.ReactionDamage > 0)
+            return Score(1450, "弹跳与火系增伤之后补其他有效增伤，同档比较模拟收益");
         bool markSource = held.Mark > 0 || method != "sima.guarda" && run.At("heroes").A().Any(h => h.At("marca").B());
-        if (fx.Mark > 0) return (1350, "补充暗影标记，让后续攻击受益");
+        if (fx.Mark > 0) return Score(1400, "补充一次暗影标记来源，为后续增伤服务");
         if ((fx.MarkDeepen > 0 || fx.VsMarked > 0) && markSource)
-            return (1340, "已有标记来源，优先标记增伤");
-        if (fx.MarkDeepen > 0 || fx.VsMarked > 0) return (100, "缺少标记来源，标记专用强化暂不抢输出名额");
+            return Score(1390, "已有标记来源，补标记增伤");
         if (fx.Damage > 0 || fx.Speed > 0 || fx.Crit > 0 || fx.CritDamage > 0 || fx.Execute > 0 || fx.VsElite > 0)
-            return (1300, "优先攻击、攻速和双暴等输出强化，同档比较模拟收益");
-        if (fx.Slow > held.Slow) return (900, "补强已有减速，优先级低于有效输出强化");
+            return Score(1350, "补攻击、攻速与双暴等输出，重复数值牌降权，避免连续堆同一种牌");
+        if (!missingCore && fx.Shield > 0 && held.Shield == 0)
+            return Score(1000, "输出牌之后可补首张开局盾，不抢弹跳与增伤名额");
+        if (fx.Slow > held.Slow && held.Slow == 0) return Score(700, "冻结与输出未出现时补充控制来源");
         if (fx.Shield > 0 && held.Shield > 0)
-            return (fx.Shield >= .2 ? 450 : 300, "后续开局盾作为补充，优先把名额留给攻击和弹跳");
-        if (core) return (-10, "已有可继承冻结核心，无需重复叠冻结；优先其他有效强化");
-        // Family alone is not an offensive effect. Pure ice/poison defense
-        // receives no blanket bonus once the core search stage has ended.
-        return (100, "防御或其他补充效果，同级比较模拟收益");
+            return Score(fx.Shield >= .2 ? 300 : 150, "已有护盾后只少量补防御，优先把选择留给输出");
+        return Score(100, "少量防御或其他补充，不抢弹跳与增伤名额");
     }
     public static int Priority(JsonNode c, Settings cfg, JsonNode? run = null, string method = "sima.reliquia") => BuildValue(c, cfg, run, method).Priority;
     public static string Reason(JsonNode c, Settings cfg, JsonNode run, string method) => BuildValue(c, cfg, run, method).Reason;
@@ -188,13 +188,13 @@ static class Cards
     {
         var cards = c.Method == "sima.guarda" ? Inherited(run) : Current(run);
         if (c.Card == null) return cards;
-        // Badge choices are permanent alternatives, not another copy of the offer table.
+        // Badges affect this floor only. Inheritance projects relics only, never badges or buffs.
         return cards.Append(c.Card).ToArray();
     }
     public static (bool Allowed, double Value, bool Core) Rate(JsonNode c, Settings cfg)
     {
         // Effects, survival and interactions are evaluated by the simulator.
         // Build priority is separate from combat forecasts; do not invent affinity odds.
-        return (!Forbidden(c), 0, IsCore(c, cfg));
+        return (CardRules.DisabledStatus(c, cfg) == null, 0, IsCore(c, cfg));
     }
 }

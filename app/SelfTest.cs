@@ -45,7 +45,7 @@ static class SelfTest
             Assert(Cards.Project(onlyBadge, carryChoice).Count(c => Cards.IsCore(c, cfg)) == 1, "下一层只投影实际保留的冻结牌，不带走本层徽章");
             var blast = JsonNode.Parse("{\"id\":\"damage_bounce\",\"desc\":\"+10% de daño y cada 5 autoataques tu golpe salta a todos\"}")!;
             Assert(Cards.Priority(blast,cfg,retained,"sima.guarda") > Cards.Priority(critCard,cfg,retained,"sima.guarda"), "跨层核心已有时先弹跳再双暴，同级比较模拟");
-            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg) == Cards.Priority(critCard,cfg), "通用攻击与双暴同档比较模拟，不因火系家族低估输出");
+            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg,retained,"sima.guarda") > Cards.Priority(critCard,cfg,retained,"sima.guarda"), "冻结已继承时火系增伤优先于普通双暴输出");
             var shopExit=new Choice("exit","sima.move",new()){Forecast=new(1,1,1,1,115,4096)};
             var shopGood=new Choice("good","sima.trade",new(),card:JsonNode.Parse("{\"desc\":\"+6% de daño\"}")){Forecast=new(.8,.7,.9,.5,90,4096)};
             var shopBad=new Choice("bad","sima.trade",new(),card:new JsonObject()){Forecast=new(.6,.5,.7,.4,70,4096)};
@@ -59,7 +59,7 @@ static class SelfTest
             Assert(Math.Abs(favor.Outgoing(false,false,1,true)-1.08)<.00001 && favor.Outgoing(false,false,1)==1, "实测 Rencor 商店增益只对精英与首领计入8%增伤");
             var incense = Effects.Parse([JsonNode.Parse("{\"id\":\"au_incienso\",\"desc\":\"Escudo del 4% de tu vida durante 3 s al empezar cada sala; bajo el 40% de vida, tu defensa sube un 8% y te limpias los estados\"}")!],cfg);
             Assert(Math.Abs(incense.LowAt-.4)<.0001 && Math.Abs(incense.LowDefense-.08)<.0001 && Math.Abs(incense.Shield-.04)<.0001, "实测 Incienso 的低血防御与开场盾均参与模型");
-            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，明确消耗状态效果降序且普攻点燃带电硬禁");
+            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，非点燃搭配的状态消耗效果保留旧回避设置");
             Assert(cfg.ClearFloors == 0 && cfg.StopDepth == 0 && cfg.RetreatHp == 0 && cfg.MinWinRate == 0, "默认持续下潜，不因层数、生命或预测胜率提前停止");
             Assert(cfg.SkipBattleReplay, "默认跳过战斗播放");
             Assert(cfg.Formation.SequenceEqual(new[] { "berserker", "mago", "arquera", "paladin" }), "默认使用图二：狂战士、法师、弓箭手、圣骑士");
@@ -132,7 +132,7 @@ static class SelfTest
             };
             Assert(Pilot.Rank(prioritized).Select(x => x.Label).SequenceEqual(new[] { "core", "cold", "utility" }), "缺核心时核心优先，寒冷积累优先于其他系列");
             var coreRun = JsonNode.Parse("{\"profundidad\":6,\"reliquias\":[{\"id\":\"es2_carambano\"}]}")!;
-            Assert(Cards.Priority(ice,cfg,coreRun)==-10, "已有可保留核心时不重复优先叠冻结");
+            Assert(CardRules.SkipReason(ice,coreRun,cfg,"sima.reliquia") != null, "已有可保留核心时不重复优先叠冻结");
             Assert(Pilot.RewardPhase(coreRun,cfg) && cfg.RewardFloors==7, "有核心默认前七层优先核心和碎屑奖励");
             coreRun["profundidad"]=7;
             Assert(!Pilot.RewardPhase(coreRun,cfg), "P7 起退出奖励阶段并继续下潜");
@@ -143,7 +143,7 @@ static class SelfTest
             Assert(Pilot.RouteChoice(routeRun,"fight",cfg).Risk>Pilot.RouteChoice(routeRun,"safe",cfg).Risk,"P7 之后安全路线优先，必经战斗仍有合法候选");
             Assert(Pilot.RouteChoice(routeRun,"fight",new Settings{AvoidCombatAfterRewardFloors=false}).Risk<Pilot.RouteChoice(routeRun,"fight",cfg).Risk,"关闭避战开关可自定义后半程策略");
             var legacy=JsonNode.Parse("{\"guardaPendiente\":{\"cartas\":[{\"id\":\"es_carambano\",\"llevas\":1}]}}")!;
-            Assert(Cards.Priority(ice,cfg,legacy,"sima.guarda")==-10 && Cards.Inherited(legacy).Length==1,"已继承核心不会被误认为下一层丢失");
+            Assert(CardRules.SkipReason(ice,legacy,cfg,"sima.guarda") != null && Cards.Inherited(legacy).Length==1,"已继承核心不会被误认为下一层丢失");
             legacy["guardaPendiente"]!["cartas"]![0]!["llevas"]=0;
             Assert(Cards.Priority(ice,cfg,legacy,"sima.guarda")==2000,"尚未继承核心时带走核心优先");
             var fx=Effects.Parse(new[]{JsonNode.Parse("{\"desc\":\"+40% de daño contra lo que lleve un estado encima\"}")!,JsonNode.Parse("{\"desc\":\"+5% de velocidad de ataque\"}")!,JsonNode.Parse("{\"desc\":\"+0,6% de robo de vida\"}")!},cfg);
@@ -248,6 +248,8 @@ static class SelfTest
             local.Evaluate([sharpen,meditate],synthetic,fastCfg,CancellationToken.None);
             Assert(sharpen.Forecast!.Duration<meditate.Forecast!.Duration,"满血满魂时磨利强化会缩短后续战斗，而非永远选无收益冥想");
             StrategyTests.Run(Assert);
+            CardSelectionTests.Run(Assert);
+            CardFlowTests.Run(Assert).GetAwaiter().GetResult();
             ResilienceTests.Run(Assert).GetAwaiter().GetResult();
             J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = true, checks }); return 0;
         }

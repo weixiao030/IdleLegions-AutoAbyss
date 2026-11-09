@@ -160,9 +160,12 @@ sealed class Simulation
             {
                 foes = []; row = 1; kind = "combate"; scenarioDepth++;
             }
+            // A confirmed chapter uses actual retained cards at its current depth.
+            // Do not replay the defeated boss or advance the depth twice.
+            if (c.Method == "local.chapterReview") { foes = []; row = 1; kind = "combate"; }
             // Selection rooms are evaluated against the visible next fights.
             // All cards share the same scenario, never random per-card enemies.
-            if ((c.Card != null || c.Method == "sima.rest") && c.Method != "sima.guarda" && foes.Length == 0)
+            if ((c.Card != null || c.Method == "sima.rest") && c.Method is not ("sima.guarda" or "local.chapterReview") && foes.Length == 0)
             {
                 var dest = run.At("destinos").A().Select(x => x.S()).FirstOrDefault(id => s.At("peeks", id, "enemigos").A().Any());
                 if (dest != null) { foes = s.At("peeks", dest, "enemigos").A().ToArray(); nd = run.At("mapa", "nodos", dest); row = (int)nd.At("fila").N(row); kind = nd.At("tipo").S(kind); }
@@ -275,11 +278,13 @@ sealed class Simulation
                         double d=hit[hero]*(skill==null?1:skill.Mult*(1+.08*sharp))*crit*fx.Outgoing(slowTo[e]>now||frozenTo[e]>now,statusTo[e]>now||frozenTo[e]>now,eh[e]/Math.Max(1,eHp[e]*strength),kind is "elite" or "jefe")*(.9+rng.NextDouble()*.2);
                         if(debuffTo[e]>now)d*=1.4;
                         if(markTo[e]>now && marks[e]>0) d*=1+marks[e]*(fx.Mark+fx.MarkDeepen)+fx.VsMarked;
-                        if(fx.ConsumesStatus && frozenTo[e]>now) frozenTo[e]=0;
+                        // Resolve an existing elemental reaction before a basic
+                        // detonator consumes its status; skills do not trigger it.
                         // Direct fire skills and burn damage over time are different.
                         // Fire-family passives never imply fire attacks; lightning
                         // consumption remains an exposed uncertain assumption.
                         if(frozenTo[e]>now && (element=="fire" || element=="lightning" && cfg.LightningConsumesFreeze)) {d*=(element=="fire"?2:1.3)*(1+fx.ReactionDamage);frozenTo[e]=0;if(element=="lightning")debuffTo[e]=now+6;}
+                        if(basic && fx.ConsumesStatus) { frozenTo[e]=0; statusTo[e]=0; slowTo[e]=0; }
                         eh[e]-=d;hp[hero]=Math.Min(maxHp[hero]*(1+fx.Life)/(1+current.Life),hp[hero]+d*fx.Leech+healRate[hero]*interval[hero]/(1+fx.Speed));
                         if(basic&&fx.Freeze||element=="ice")frozenTo[e]=Math.Max(frozenTo[e],now+freezeSecs);
                         if(basic && fx.Mark>0) { marks[e]=Math.Min(Math.Max(1,fx.MarkCap),markTo[e]>now?marks[e]+1:1); markTo[e]=now+10; }
@@ -298,7 +303,7 @@ sealed class Simulation
             double center=(p+z*z/(2*cfg.Simulations))/denom,margin=z*Math.Sqrt((p*(1-p)+z*z/(4*cfg.Simulations))/cfg.Simulations)/denom;
             double avg=rem/cfg.Simulations,coverage=frozenSum/cfg.Simulations;
             double searchBonus=!current.Freeze&&c.Card!=null&&Cards.Family(c.Card)=="escarcha"?cfg.FreezeWeight:0;
-            double conflict=cfg.AvoidFireLightning&&fx.ConsumesStatus?cfg.FreezeWeight*(1-coverage):0;
+            double conflict=cfg.AvoidFireLightning&&fx.ConsumesStatus&&!CardRules.BoostDetonator(fx,cfg)?cfg.FreezeWeight*(1-coverage):0;
             c.Forecast=new(p,Math.Max(0,center-margin),Math.Min(1,center+margin),avg,
                 p*100+avg*cfg.RiskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/cfg.Simulations))+coverage*cfg.FreezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,cfg.Simulations,coverage,totalTime/cfg.Simulations,known,fx.Unknown.Distinct().ToArray());
         });

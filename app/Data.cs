@@ -75,6 +75,8 @@ sealed class Settings
     public double ShardRewardWeight { get; set; } = 4;
     public double FreezeDuration { get; set; } = 1.0;
     public int PactFloors { get; set; } = 7;
+    public bool AllowBasicBurn { get; set; } = true;
+    public bool AllowBasicLightning { get; set; } = false;
     public bool AvoidFireLightning { get; set; } = true;
     public bool LightningConsumesFreeze { get; set; } = false;
     public bool AutoEnter { get; set; } = true;

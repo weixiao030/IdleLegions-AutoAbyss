@@ -25,10 +25,10 @@ static class StrategyTests
         check(Cards.Priority(glacier, cfg) > Cards.Priority(core, cfg), "真实传说冻结加五次弹跳优先于普通冻结核心");
         check(P(glacier) > P(shield), "已有普通核心仍优先升级传说冻结弹跳核心");
         run["reliquias"]!.AsArray().Add(lightning.DeepClone());
-        check(P(glacier)>P(shield),"已有普通冻结加电系五次弹跳，仍可升级传说冻结核心");
+        check(P(glacier)<P(crit),"冻结和五次弹跳已有，不再优先追传说冻结升级");
         run["reliquias"]!.AsArray().RemoveAt(1);
-        check(P(shield) > P(slow), "已有核心先补一张可保留开局护盾");
-        check(P(lightning) > P(vsSlow) && P(vsSlow) > P(slow) && P(vsSlow) > P(crit) && P(poison) > P(crit), "弹跳及减速增伤高于补减速，异常增伤优于普通输出");
+        check(P(shield) > P(slow) && P(shield) < P(crit), "已有核心后首盾仅作补充，低于输出，高于多余冰减速");
+        check(P(lightning) > P(fireDamage) && P(fireDamage) > P(poison) && P(poison) > P(crit) && P(crit) > P(slow), "继承冻结后依次优先全体弹跳、火系增伤、其他增伤和普通输出，冰减速降序");
         check(P(fireDamage) > P(crit) && P(lightning) > P(crit), "火系纯状态增伤与电系弹跳不再被家族回避误伤");
         check(Effects.Parse([plague], cfg).Cleave == 5 && Effects.Parse([plague], cfg).Poison, "识别真实毒系传说五次弹跳的复数描述");
         check(Math.Abs(Effects.Parse([Card("po_entumecer", "ponzona", "Tus golpes dejan al objetivo un 10% más lento durante 3 s")], cfg).Slow - .1) < 1e-8, "识别真实更慢百分比描述");
@@ -44,9 +44,12 @@ static class StrategyTests
         check(Effects.Parse([mark, deepen], cfg) is { Mark: > 0, MarkDeepen: > 0, MarkCap: 4 }, "标记来源、加深和上限进入组合模型");
         var burn = Card("br_yesca", "brasa", "Tus autoataques dejan al objetivo ARDIENDO");
         var detonate = Card("br_detonador", "brasa", "Tus autoataques CONSUMEN el estado del objetivo y fuerzan su reacción");
-        check(!Cards.Rate(burn,cfg).Allowed && P(detonate) < 0 && P(fireDamage) > 0, "普攻点燃硬禁，明确消耗状态仍降序，火家族纯伤害允许");
+        check(Cards.Rate(burn,cfg).Allowed && P(detonate) > P(fireDamage), "默认允许点燃，继承冻结后引爆器提高优先级");
+        cfg.AllowBasicBurn = false;
+        check(!Cards.Rate(burn,cfg).Allowed && P(detonate) < 0 && P(fireDamage) > 0, "只关闭普攻点燃，引爆器不再加权，火系纯增伤仍可选");
+        cfg.AllowBasicBurn = true;
         run["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(shield.DeepClone()) };
-        check(P(shield, "sima.guarda") > P(poison, "sima.guarda"), "继承时已有核心而尚无继承盾，优先补一张盾");
+        check(P(shield, "sima.guarda") < P(poison, "sima.guarda"), "继承已有冻结后，增伤优先于首次补盾");
         run["guardaPendiente"]!["cartas"]![0]!["llevas"] = 1;
         check(P(shield, "sima.guarda") < P(poison, "sima.guarda"), "已有继承盾后优先异常增伤，高级盾仍为合法补充");
 
@@ -85,20 +88,20 @@ static class StrategyTests
             bool nonfinite=false; try { new Settings { RiskAversion=double.NaN }.Validate(); } catch { nonfinite=true; }
             check(nonfinite && new Settings().DelayMs==1000, "仍拒绝非有限数字，操作间隔默认1000毫秒");
             check(LoopPolicy.Configure(cfg,new("count",10001)).MaxRuns==10001 && LoopPolicy.Stop(LoopPolicy.Configure(cfg,new("count",-2)),0,10)!=null, "次数循环没有1000上限，负次数不新入场");
-            pilot.Save(new Settings { PreferFreezeBuild=false, AvoidFireLightning=false });
+            pilot.Save(new Settings { PreferFreezeBuild=false, AvoidFireLightning=false, AllowBasicBurn=false, AllowBasicLightning=false });
             var prohibited=new[]{"br_yesca","br_incendio","fu_descarga","fu_tormenta"}.Select(id=>Card(id,"","")).ToArray();
             var described=Card("future_electric","fulgor","Tus autos ELECTRIFICAN y pegas +5% a lo que lleve un estado");
             var localized=Card("future_burn","brasa",""); localized["descZh"]="普攻使敌人燃烧";
             foreach(var method in new[]{"sima.reliquia","sima.blason","sima.guarda"})
             {
                 var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,new JsonObject());
-                check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"硬性排除普攻点燃带电，关闭偏好开关仍有效，电系弹跳允许");
+                check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"按独立开关排除普攻点燃带电，关闭构筑偏好仍有效，电系弹跳允许");
             }
-            bool noUnsafeFallback=false; try {pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());} catch(Exception e){noUnsafeFallback=e.Message.Contains("全部");}
+            bool noUnsafeFallback=false; try {pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());} catch(Exception e){noUnsafeFallback=e.Message.Contains("没有符合");}
             check(noUnsafeFallback,"只有禁牌时明确暂停，不以fallback选中禁牌");
             var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_carambano"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
             store["sima"]!["run"]!["tienda"]!["buffs"]=new JsonArray(prohibited.Append(described).Append(shield).Select(c=>c.DeepClone()).ToArray());
-            pilot.Save(cfg);
+            cfg.AllowBasicBurn=false; pilot.Save(cfg);
             var shop=pilot.Build(store).Where(c=>c.Method=="sima.trade").ToArray();
             check(shop.Length==1 && shop[0].Card.At("id").S()=="au_alba","生产商店入口过滤禁牌且允许第二张高级盾");
             var inherited=JsonNode.Parse("""{"reliquias":[{"id":"es_carambano"}],"guardaPendiente":{"cartas":[{"id":"au_alba","llevas":1}]}}""")!;

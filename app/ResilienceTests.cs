@@ -81,7 +81,7 @@ static class ResilienceTests
                 check(Pilot.Rank(pilot.CardChoices([defense, shield, attack], method, held))[0].Card.At("id").S() == "attack", method + " 普通攻击优于冰毒纯防御及重复盾");
             }
             var firstShield = new JsonObject { ["reliquias"] = new JsonArray(core.DeepClone()) };
-            check(Pilot.Rank(pilot.CardChoices([attack, shield, bounce], "sima.reliquia", firstShield))[0].Card.At("id").S() == "au_alba", "首个开局盾仍先补齐，避免完全放弃生存");
+            check(Pilot.Rank(pilot.CardChoices([attack, shield, bounce], "sima.reliquia", firstShield))[0].Card.At("id").S() == "fu_cadena", "即使缺首盾，仍先选全体弹跳，防御只作补充");
             var shop = Fixture(); var sr = shop.At("sima", "run")!;
             sr["heroes"] = new JsonArray(); sr["reliquias"] = held["reliquias"]!.DeepClone(); sr["lagrimas"] = 0;
             sr["mapa"]!["nodos"]!["room"]!["tipo"] = "chatarrero";
@@ -101,7 +101,7 @@ static class ResilienceTests
                     check(opts.Length == 1 && opts[0].Card.At("id").S() == "attack", method + " P" + depth + "排除首盾，只拿攻击");
                 }
                 var late = new JsonObject { ["profundidad"] = 7, ["reliquias"] = new JsonArray(core.DeepClone()) };
-                check(Pilot.Rank(pilot.CardChoices([shield, attack], method, late))[0].Card.At("id").S() == "au_alba", method + " P7解除护盾避让，可补首盾");
+                check(pilot.CardChoices([shield, attack], method, late).Any(c => c.Card.At("id").S() == "au_alba") && Pilot.Rank(pilot.CardChoices([shield, attack], method, late))[0].Card.At("id").S() == "attack", method + " P7解除护盾避让但输出仍优先，首盾可补");
             }
             check(!pilot.Build(shop).Any(c => c.Card.At("id").S() == "au_alba"), "前7层商店不买护盾");
             sr["profundidad"] = 7;

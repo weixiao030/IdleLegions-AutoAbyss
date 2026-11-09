@@ -44,5 +44,7 @@
   "lightningConsumesFreeze": false,
   "retryTimeouts": true,
   "skipShieldCardsEarly": true,
-  "shieldSkipFloors": 7
+  "shieldSkipFloors": 7,
+  "allowBasicBurn": true,
+  "allowBasicLightning": false
 }
