@@ -32,10 +32,11 @@
   "gamePath": "",
   "formation": [
     "berserker",
-    "arquera",
     "mago",
+    "arquera",
     "paladin"
   ],
   "loopUntilRopesEmpty": false,
-  "preferFreezeBuild": true
+  "preferFreezeBuild": true,
+  "avoidEliteIds": []
 }

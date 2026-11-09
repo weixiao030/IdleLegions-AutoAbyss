@@ -10,6 +10,22 @@ static class SelfTest
         try
         {
             void Assert(bool value, string name) { if (!value) throw new Exception(name); checks.Add(name); }
+            using (var icon = Branding.LoadIcon(new System.Drawing.Size(16, 16)))
+                Assert(icon.Size == new System.Drawing.Size(16, 16) && icon.Handle != IntPtr.Zero, "托盘16像素图标可在源流释放后使用");
+            using (var icon = Branding.LoadIcon(new System.Drawing.Size(32, 32)))
+                Assert(icon.Size == new System.Drawing.Size(32, 32) && icon.Handle != IntPtr.Zero, "高DPI32像素托盘图标可独立释放");
+            var assembly = typeof(Branding).Assembly;
+            using var iconStream = assembly.GetManifestResourceStream("app.ico")!;
+            using var iconBytes = new MemoryStream(); iconStream.CopyTo(iconBytes);
+            var rawIcon = iconBytes.ToArray();
+            var iconSizes = Enumerable.Range(0, BitConverter.ToUInt16(rawIcon, 4)).Select(i => rawIcon[6 + i * 16] == 0 ? 256 : (int)rawIcon[6 + i * 16]).ToArray();
+            Assert(BitConverter.ToUInt16(rawIcon, 2) == 1 && iconSizes.SequenceEqual(new[] {16,20,24,32,40,48,64,128,256}), "ICO包含九档Windows尺寸，含256像素");
+            using var faviconStream = assembly.GetManifestResourceStream("web/favicon.ico")!;
+            using var faviconBytes = new MemoryStream(); faviconStream.CopyTo(faviconBytes);
+            Assert(rawIcon.SequenceEqual(faviconBytes.ToArray()), "EXE托盘与网页favicon图标资源一致");
+            using var htmlStream = assembly.GetManifestResourceStream("web/index.html")!;
+            using var htmlReader = new StreamReader(htmlStream);
+            Assert(htmlReader.ReadToEnd().Contains("href=\"/favicon.ico\""), "生产HTML声明浏览器页签图标");
             var cfg = new Settings(); cfg.Validate();
             var loopOriginal = new Settings { MaxRuns = 7, ReserveRopes = 2, AutoEnter = false };
             var countLoop = LoopPolicy.Configure(loopOriginal, new("count", 3));
@@ -22,15 +38,15 @@ static class SelfTest
             Assert(badLoop, "拒绝零次循环");
             var retained = JsonNode.Parse("{\"reliquias\":[{\"id\":\"es_carambano\",\"familia\":\"escarcha\"},{\"id\":\"um_filo\"}],\"guardaPendiente\":{\"cartas\":[{\"id\":\"um_filo\",\"llevas\":0}],\"heredadas\":1}}")!;
             var critCard = JsonNode.Parse("{\"id\":\"um_filo\",\"familia\":\"umbra\",\"desc\":\"+6 puntos de crítico y +20% de daño crítico\"}")!;
-            Assert(Cards.Inherited(retained).Length == 1 && Cards.IsCore(Cards.Inherited(retained)[0], cfg) && Cards.Priority(critCard, cfg, retained, "sima.guarda") == 800, "继承基线保留不在本层候选里的已继承核心，再优先暴击暴伤");
+            Assert(Cards.Inherited(retained).Length == 1 && Cards.IsCore(Cards.Inherited(retained)[0], cfg) && Cards.Priority(critCard, cfg, retained, "sima.guarda") == 350, "继承基线保留候选外旧核心，双暴进入补充档");
             var onlyBadge = JsonNode.Parse("{\"blasones\":[{\"id\":\"es2_carambano\"}],\"reliquias\":[],\"guardaPendiente\":{\"cartas\":[{\"id\":\"es_carambano\",\"llevas\":0}]}}")!;
             var transferable = JsonNode.Parse("{\"id\":\"es_carambano\",\"familia\":\"escarcha\",\"desc\":\"Tus autoataques CONGELAN al objetivo\"}")!;
             Assert(Cards.Priority(transferable, cfg, onlyBadge, "sima.guarda") == 2000 && Cards.Priority(transferable, cfg, onlyBadge) == 2000, "本层冻结徽章不能替代可继承冻结牌，选牌和唯一带走名额都优先核心");
             var carryChoice = new Choice("core", "sima.guarda", new(), card: transferable);
             Assert(Cards.Project(onlyBadge, carryChoice).Count(c => Cards.IsCore(c, cfg)) == 1, "下一层只投影实际保留的冻结牌，不带走本层徽章");
             var blast = JsonNode.Parse("{\"id\":\"damage_bounce\",\"desc\":\"+10% de daño y cada 5 autoataques tu golpe salta a todos\"}")!;
-            Assert(Cards.Priority(critCard,cfg,retained,"sima.guarda") > Cards.Priority(blast,cfg,retained,"sima.guarda") && Cards.Priority(blast,cfg,retained,"sima.guarda") == 600, "跨层核心已有时，暴击暴伤优先于伤害弹跳，同级再比较模拟");
-            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg) < Cards.Priority(critCard,cfg), "火雷回避设置实际参与选牌排序");
+            Assert(Cards.Priority(blast,cfg,retained,"sima.guarda") > Cards.Priority(critCard,cfg,retained,"sima.guarda"), "跨层核心已有时先弹跳再双暴，同级比较模拟");
+            Assert(Cards.Priority(JsonNode.Parse("{\"familia\":\"brasa\",\"desc\":\"+50% de daño\"}")!,cfg) < Cards.Priority(critCard,cfg), "普通火系通用增伤仍低于双暴补充，不冒充状态增伤");
             var shopExit=new Choice("exit","sima.move",new()){Forecast=new(1,1,1,1,115,4096)};
             var shopGood=new Choice("good","sima.trade",new(),card:JsonNode.Parse("{\"desc\":\"+6% de daño\"}")){Forecast=new(.8,.7,.9,.5,90,4096)};
             var shopBad=new Choice("bad","sima.trade",new(),card:new JsonObject()){Forecast=new(.6,.5,.7,.4,70,4096)};
@@ -44,10 +60,47 @@ static class SelfTest
             Assert(Math.Abs(favor.Outgoing(false,false,1,true)-1.08)<.00001 && favor.Outgoing(false,false,1)==1, "实测 Rencor 商店增益只对精英与首领计入8%增伤");
             var incense = Effects.Parse([JsonNode.Parse("{\"id\":\"au_incienso\",\"desc\":\"Escudo del 4% de tu vida durante 3 s al empezar cada sala; bajo el 40% de vida, tu defensa sube un 8% y te limpias los estados\"}")!],cfg);
             Assert(Math.Abs(incense.LowAt-.4)<.0001 && Math.Abs(incense.LowDefense-.08)<.0001 && Math.Abs(incense.Shield-.04)<.0001, "实测 Incienso 的低血防御与开场盾均参与模型");
-            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，回避火雷遗物");
+            Assert(!cfg.PrepareSkills && cfg.AvoidFireLightning, "默认保留技能，降低消耗冻结的普攻优先级");
             Assert(cfg.ClearFloors == 0 && cfg.StopDepth == 0 && cfg.RetreatHp == 0 && cfg.MinWinRate == 0, "默认持续下潜，不因层数、生命或预测胜率提前停止");
             Assert(cfg.SkipBattleReplay, "默认跳过战斗播放");
-            Assert(Settings.ValidFormation(cfg.Formation) && cfg.Formation[1] == "arquera" && Settings.ValidFormation(["berserker", "mago", "arquera", "paladin"]) && !Settings.ValidFormation(["berserker", "paladin", "arquera", "mago"]), "只接受用户指定的两种站位，默认狂战士、弓箭手、法师、圣骑士");
+            Assert(cfg.Formation.SequenceEqual(new[] { "berserker", "mago", "arquera", "paladin" }), "默认使用图二：狂战士、法师、弓箭手、圣骑士");
+            var professions = FormationRules.Professions;
+            Assert(professions.Select(p => p.Id).ToHashSet().SetEquals(new[] { "berserker", "arquera", "healer", "asesino", "paladin", "medico", "mago", "cruzado" }) && professions.All(p => p.Name.Any(c => c >= '\u4e00' && c <= '\u9fff')), "全部八个游戏职业均有中文名，前后端共享职业表");
+            int formations = 0;
+            foreach (var a in professions) foreach (var b in professions) foreach (var c in professions) foreach (var d in professions)
+                if (new[] { a.Id, b.Id, c.Id, d.Id }.Distinct().Count() == 4) { if (!Settings.ValidFormation([a.Id, b.Id, c.Id, d.Id])) throw new Exception("合法自由阵容被拒绝"); formations++; }
+            Assert(formations == 1680, "全部1680种四职业有序组合均可保存，不固定狂战士或圣骑士的位置");
+            Assert(!Settings.ValidFormation(null) && !Settings.ValidFormation([]) && !Settings.ValidFormation(["berserker", "mago", "paladin"]) && !Settings.ValidFormation(["berserker", "mago", "mago", "paladin"]) && !Settings.ValidFormation(["berserker", "unknown", "arquera", "paladin"]) && !Settings.ValidFormation(["berserker", null!, "arquera", "paladin"]), "拒绝空阵容、缺位、重复、未知职业及空职业");
+            var originalData = Paths.Data;
+            var formationData = Path.Combine(Path.GetTempPath(), "frost-formation-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Paths.Data = formationData;
+                J.Write(Paths.Config, new Settings { Seed = 9988, Formation = ["berserker", "arquera", "mago", "paladin"] });
+                var formationPilot = new Pilot();
+                Assert(formationPilot.Config.Formation[1] == "arquera", "加载旧配置保留原站位，不重置已有方案");
+                var custom = new[] { "berserker", "asesino", "mago", "paladin" };
+                formationPilot.SaveFormation(custom);
+                custom[0] = "medico";
+                var reloaded = new Pilot();
+                Assert(reloaded.Config.Seed == 9988 && reloaded.Config.Formation.SequenceEqual(new[] { "berserker", "asesino", "mago", "paladin" }), "独立保存站位落盘且重开可恢复，保留其他参数并隔离调用方数组修改");
+                var beforeInvalid = File.ReadAllText(Paths.Config);
+                bool refused = false; try { reloaded.SaveFormation(["mago", "mago", "healer", "cruzado"]); } catch { refused = true; }
+                Assert(refused && File.ReadAllText(Paths.Config) == beforeInvalid, "非法站位不会覆盖磁盘配置");
+                var roster = new JsonArray(professions.Select(p => (JsonNode)new JsonObject { ["defId"] = p.Id, ["id"] = "owned-" + p.Id }).ToArray());
+                var entrySnapshot = new JsonObject { ["heroes"] = roster, ["sima"] = new JsonObject { ["puedeEntrar"] = true, ["cuerdas"] = 20 } };
+                for (int offset = 0; offset < professions.Length; offset++)
+                {
+                    var team = Enumerable.Range(0, 4).Select(i => professions[(offset + i) % professions.Length].Id).ToArray();
+                    reloaded.SaveFormation(team);
+                    var entry = reloaded.Build(entrySnapshot).Single();
+                    if (entry.Method != "sima.enter" || !entry.Args.At("ordenado").B() || !entry.Args.At("heroes").A().Select(h => h.S()).SequenceEqual(team.Select(id => "owned-" + id))) throw new Exception("入场英雄顺序或职业映射错误");
+                }
+                Assert(true, "实际入场请求覆盖八职业，按前排到后排的保存顺序发送真实英雄ID");
+                bool missingChinese = false; try { FormationRules.ResolveHeroes(["healer", "asesino", "medico", "cruzado"], new JsonObject()); } catch (Exception e) { missingChinese = e.Message.Contains("治疗师") && !e.Message.Contains("healer"); }
+                Assert(missingChinese, "账号缺少职业时显示中文提示");
+            }
+            finally { Paths.Data = originalData; if (Directory.Exists(formationData)) Directory.Delete(formationData, true); }
             var pactRun = JsonNode.Parse("{\"profundidad\":6,\"pacto\":{\"sellado\":false},\"reliquias\":[{\"id\":\"es2_carambano\"}]}")!;
             Assert(cfg.PactFloors == 7 && Pilot.ShouldPact(pactRun, cfg), "有普攻冻结时默认前七层 P0～P6 缔结契约");
             pactRun["profundidad"] = 7;
@@ -187,6 +240,7 @@ static class SelfTest
             var meditate=new Choice("meditate","sima.rest",new(){["opcion"]="meditar"});
             local.Evaluate([sharpen,meditate],synthetic,fastCfg,CancellationToken.None);
             Assert(sharpen.Forecast!.Duration<meditate.Forecast!.Duration,"满血满魂时磨利强化会缩短后续战斗，而非永远选无收益冥想");
+            StrategyTests.Run(Assert);
             J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = true, checks }); return 0;
         }
         catch (Exception e) { J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = false, checks, error = e.ToString() }); return 1; }

@@ -1,4 +1,6 @@
-IdleLegions自动下井 1.0：第三方组件及许可
+IdleLegions自动下井 1.2：第三方组件及许可
+
+应用图标（EXE、托盘、网页）使用 Phosphor Icons 的 Snowflake、CaretDown bold 字形；未改动原始路径，采用 MIT 许可。下方 @phosphor-icons/react 段落包含完整许可。图标未使用游戏美术。
 
 前端生产依赖来自锁定的 ui/package-lock.json。以下包含生产依赖包的原始许可文本；部分类型或辅助包不一定进入最终 bundle，仍一并保留声明。
 构建工具 Vite 为 MIT 许可，仅构建时使用。Windows 发行包还包含 .NET 8 与 Windows Desktop Runtime，完整声明见 dotnet-LICENSE.txt 和 dotnet-ThirdPartyNotices.txt。

@@ -1,0 +1,10 @@
+[
+  { "id": "berserker", "name": "狂战士" },
+  { "id": "arquera", "name": "弓箭手" },
+  { "id": "healer", "name": "治疗师" },
+  { "id": "asesino", "name": "刺客" },
+  { "id": "paladin", "name": "圣骑士" },
+  { "id": "medico", "name": "瘟疫医生" },
+  { "id": "mago", "name": "法师" },
+  { "id": "cruzado", "name": "十字军" }
+]

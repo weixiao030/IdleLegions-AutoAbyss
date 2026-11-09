@@ -123,6 +123,7 @@ sealed class Simulation
     static Skill[] Skills(JsonNode? h) => h.At("skills").A().Where(k => k.At("equipped").B() && k.At("damages").B()).Select(k =>
         new Skill(Math.Clamp(Number(k.At("desc").S()), .1, 20), Math.Max(2, k.At("cooldown").N(10)), k.At("element").S("physical"),
             k.At("desc").S().Contains("TODOS") || k.At("target").S().Contains("all"), k.At("rule", "focus").S(), k.At("rule", "cond").S("always"), k.At("rule", "value").N(), k.At("animaCoste").N())).ToArray();
+    internal static double SharpenPotential(JsonNode? hero) => Skills(hero).Sum(k => k.Mult * (k.Aoe ? 2 : 1) / k.Cooldown);
     public void Evaluate(Choice[] choices, JsonNode s, Settings cfg, CancellationToken ct)
     {
         // This method is also used by the offline evaluator; enforce the minimum.
@@ -201,6 +202,7 @@ sealed class Simulation
             var targets = names.Select(name => Array.FindIndex(foes, e => e.At("name").S() == objective.At(name).S())).ToArray();
             var rng = new Random(cfg.Seed); int wins = 0; double rem = 0, frozenSum = 0, totalTime = 0;
             var hp = new double[n]; var immune = new double[n]; var shield = new double[n]; var eh = new double[m]; var frozenTo = new double[m]; var slowTo = new double[m]; var statusTo = new double[m]; var debuffTo = new double[m]; var tauntTo = new double[m]; var tauntBy = new int[m];
+            var marks = new int[m]; var markTo = new double[m];
             var next = new double[n]; var enext = new double[m]; var attackCount = new int[n]; var received = new int[n]; var mana = new double[n];
             var skillNext = skills.Select(x => new double[x.Length]).ToArray();
             for (int trial = 0; trial < cfg.Simulations; trial++)
@@ -216,7 +218,7 @@ sealed class Simulation
                     if (rest && c.Args.At("opcion").S() == "meditar") mana[h]=Math.Min(100,mana[h]+60);
                     for(int k=0;k<skills[h].Length;k++) skillNext[h][k]=1+k*.8;
                 }
-                for(int e=0;e<m;e++) { eh[e]=eHp[e]*strength; frozenTo[e]=slowTo[e]=statusTo[e]=debuffTo[e]=tauntTo[e]=0; enext[e]=.5+rng.NextDouble()*eInterval[e]; }
+                for(int e=0;e<m;e++) { marks[e]=0; markTo[e]=0; eh[e]=eHp[e]*strength; frozenTo[e]=slowTo[e]=statusTo[e]=debuffTo[e]=tauntTo[e]=0; enext[e]=.5+rng.NextDouble()*eInterval[e]; }
                 double now=0, freezeTime=0; bool win=false;
                 for(int turn=0;turn<1800;turn++)
                 {
@@ -271,9 +273,12 @@ sealed class Simulation
                         double sharp=members[hero].At("afilado").N()+(rest&&c.Args.At("opcion").S()=="afilar"&&c.Args.At("heroId").S()==members[hero].At("id").S()?1:0);
                         double d=hit[hero]*(skill==null?1:skill.Mult*(1+.08*sharp))*crit*fx.Outgoing(slowTo[e]>now||frozenTo[e]>now,statusTo[e]>now||frozenTo[e]>now,eh[e]/Math.Max(1,eHp[e]*strength),kind is "elite" or "jefe")*(.9+rng.NextDouble()*.2);
                         if(debuffTo[e]>now)d*=1.4;
+                        if(markTo[e]>now && marks[e]>0) d*=1+marks[e]*(fx.Mark+fx.MarkDeepen)+fx.VsMarked;
+                        if(fx.ConsumesStatus && frozenTo[e]>now) frozenTo[e]=0;
                         if(frozenTo[e]>now&&element is "fire" or "lightning") {d*=(element=="fire"?2:1.3)*(1+fx.ReactionDamage);frozenTo[e]=0;if(element=="lightning")debuffTo[e]=now+6;}
                         eh[e]-=d;hp[hero]=Math.Min(maxHp[hero]*(1+fx.Life)/(1+current.Life),hp[hero]+d*fx.Leech+healRate[hero]*interval[hero]/(1+fx.Speed));
                         if(basic&&fx.Freeze||element=="ice")frozenTo[e]=Math.Max(frozenTo[e],now+freezeSecs);
+                        if(basic && fx.Mark>0) { marks[e]=Math.Min(Math.Max(1,fx.MarkCap),markTo[e]>now?marks[e]+1:1); markTo[e]=now+10; }
                         if(fx.Slow>0)slowTo[e]=now+Math.Max(2,fx.SlowSeconds);
                         if(fx.Poison||element is "fire" or "poison" or "holy" or "shadow")statusTo[e]=now+4;
                         if(fx.Taunt&&basic){tauntBy[e]=hero;tauntTo[e]=now+2;}
@@ -289,7 +294,7 @@ sealed class Simulation
             double center=(p+z*z/(2*cfg.Simulations))/denom,margin=z*Math.Sqrt((p*(1-p)+z*z/(4*cfg.Simulations))/cfg.Simulations)/denom;
             double avg=rem/cfg.Simulations,coverage=frozenSum/cfg.Simulations;
             double searchBonus=!current.Freeze&&c.Card!=null&&Cards.Family(c.Card)=="escarcha"?cfg.FreezeWeight:0;
-            double conflict=cfg.AvoidFireLightning&&(fx.Burn||fx.Lightning)?cfg.FreezeWeight*(1-coverage):0;
+            double conflict=cfg.AvoidFireLightning&&(fx.Burn||fx.Lightning||fx.ConsumesStatus)?cfg.FreezeWeight*(1-coverage):0;
             c.Forecast=new(p,Math.Max(0,center-margin),Math.Min(1,center+margin),avg,
                 p*100+avg*cfg.RiskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/cfg.Simulations))+coverage*cfg.FreezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,cfg.Simulations,coverage,totalTime/cfg.Simulations,known,fx.Unknown.Distinct().ToArray());
         });

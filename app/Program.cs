@@ -39,7 +39,8 @@ static class Program
         menu.Items.Add("打开控制台", null, (_, _) => Open(url));
         menu.Items.Add("暂停自动下井", null, (_, _) => pilot.Pause());
         menu.Items.Add("退出", null, (_, _) => { pilot.Pause(); quit = true; });
-        using var tray = new NotifyIcon { Visible = true, Icon = System.Drawing.SystemIcons.Application, Text = "IdleLegions自动下井", ContextMenuStrip = menu };
+        using var trayIcon = Branding.LoadIcon(SystemInformation.SmallIconSize);
+        using var tray = new NotifyIcon { Visible = true, Icon = trayIcon, Text = "IdleLegions自动下井", ContextMenuStrip = menu };
         tray.DoubleClick += (_, _) => Open(url);
         var context = new ApplicationContext();
         using var timer = new System.Windows.Forms.Timer { Interval = 300 };
@@ -53,7 +54,7 @@ static class Program
                 catch (ObjectDisposedException) { break; }
             }
         });
-        pilot.Note("控制台已启动。先保留跨层冻结核心，再选暴击暴伤、伤害弹跳；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
+        pilot.Note("控制台已启动。先保留跨层冻结核心，补一个继承开局盾，再优先减速、异常增伤与弹跳；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
         if (!args.Contains("--no-browser")) Open(url);
         Application.Run(context); listener.Close(); tray.Visible = false;
         try { File.Delete(Path.Combine(Paths.Data, "console.url")); } catch { }
@@ -69,7 +70,6 @@ static class Program
             c.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
             if (c.Request.UserHostName != new Uri(origin).Authority) { c.Response.StatusCode = 403; return; }
             var path = c.Request.Url!.AbsolutePath;
-            if (path == "/favicon.ico") { c.Response.StatusCode = 204; return; }
             if (path.StartsWith("/api/"))
             {
                 if (c.Request.Headers["X-Frost-Key"] != key || c.Request.Headers["Origin"] is { } o && o != origin) { c.Response.StatusCode = 403; await Json(c, new { ok = false, error = "本地访问凭证无效，请从托盘重新打开控制台。" }); return; }
@@ -81,6 +81,9 @@ static class Program
                 var body = await reader.ReadToEndAsync();
                 switch (path)
                 {
+                    case "/api/formation":
+                        pilot.SaveFormation(JsonSerializer.Deserialize<FormationRequest>(body, J.Options)?.Formation);
+                        await Json(c, new { ok = true, config = pilot.Config }); return;
                     case "/api/config": pilot.Save(JsonSerializer.Deserialize<Settings>(body, J.Options) ?? throw new Exception("配置为空。")); break;
                     case "/api/start": pilot.Start(); break;
                     case "/api/loop": pilot.Start(loop: JsonSerializer.Deserialize<LoopRequest>(body, J.Options) ?? throw new Exception("循环参数为空。")); break;
@@ -100,7 +103,7 @@ static class Program
             var asm = Assembly.GetExecutingAssembly();
             var resource = asm.GetManifestResourceNames().FirstOrDefault(n => n.Replace('\\', '/') == "web/" + resourcePath);
             if (resource == null) { c.Response.StatusCode = 404; return; }
-            c.Response.ContentType = Path.GetExtension(resourcePath) switch { ".html" => "text/html; charset=utf-8", ".js" => "text/javascript; charset=utf-8", ".css" => "text/css; charset=utf-8", ".svg" => "image/svg+xml", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".png" => "image/png", ".woff2" => "font/woff2", _ => "application/octet-stream" };
+            c.Response.ContentType = Path.GetExtension(resourcePath) switch { ".html" => "text/html; charset=utf-8", ".js" => "text/javascript; charset=utf-8", ".css" => "text/css; charset=utf-8", ".svg" => "image/svg+xml", ".ico" => "image/x-icon", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".png" => "image/png", ".woff2" => "font/woff2", _ => "application/octet-stream" };
             using var stream = asm.GetManifestResourceStream(resource)!;
             if (Path.GetExtension(resourcePath) is ".html" or ".js" or ".css" or ".svg")
             {

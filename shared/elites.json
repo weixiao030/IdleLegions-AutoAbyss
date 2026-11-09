@@ -1,0 +1,156 @@
+[
+  {
+    "id": "sg_alferez",
+    "name": "陪葬旗官",
+    "hall": 0,
+    "variant": 3,
+    "group": "被埋守卫"
+  },
+  {
+    "id": "sg_verdugo",
+    "name": "教团刽子手",
+    "hall": 0,
+    "variant": 4,
+    "group": "被埋守卫"
+  },
+  {
+    "id": "sc_hierofante",
+    "name": "大祭司",
+    "hall": 1,
+    "variant": 3,
+    "group": "魂力邪教"
+  },
+  {
+    "id": "sc_reliquiario",
+    "name": "行走圣髑匣",
+    "hall": 1,
+    "variant": 4,
+    "group": "魂力邪教"
+  },
+  {
+    "id": "sa_portaancla",
+    "name": "锚持者",
+    "hall": 2,
+    "variant": 3,
+    "group": "溺亡王庭"
+  },
+  {
+    "id": "sa_canciller",
+    "name": "溺亡的宰相",
+    "hall": 2,
+    "variant": 4,
+    "group": "溺亡王庭"
+  },
+  {
+    "id": "cr_escarabajo",
+    "name": "堡垒甲虫",
+    "hall": 3,
+    "variant": 3,
+    "group": "皇家蜂巢"
+  },
+  {
+    "id": "cr_segadora",
+    "name": "皇家收割者",
+    "hall": 3,
+    "variant": 4,
+    "group": "皇家蜂巢"
+  },
+  {
+    "id": "eg_guardian",
+    "name": "石棺守卫",
+    "hall": 4,
+    "variant": 3,
+    "group": "被埋王朝"
+  },
+  {
+    "id": "eg_verdugo",
+    "name": "黑曜石刽子手",
+    "hall": 4,
+    "variant": 4,
+    "group": "被埋王朝"
+  },
+  {
+    "id": "gl_custodio",
+    "name": "永冻守卫",
+    "hall": 5,
+    "variant": 3,
+    "group": "冰川陵墓"
+  },
+  {
+    "id": "gl_verdugo",
+    "name": "霜之刽子手",
+    "hall": 5,
+    "variant": 4,
+    "group": "冰川陵墓"
+  },
+  {
+    "id": "in_injertadora",
+    "name": "嫁接师",
+    "hall": 6,
+    "variant": 3,
+    "group": "嫁接温室"
+  },
+  {
+    "id": "in_portainjertos",
+    "name": "砧木",
+    "hall": 6,
+    "variant": 4,
+    "group": "嫁接温室"
+  },
+  {
+    "id": "bq_carnicero",
+    "name": "首席屠夫",
+    "hall": 7,
+    "variant": 3,
+    "group": "饕餮者的盛宴"
+  },
+  {
+    "id": "bq_copero",
+    "name": "胆汁斟酒官",
+    "hall": 7,
+    "variant": 4,
+    "group": "饕餮者的盛宴"
+  },
+  {
+    "id": "tr_costurera",
+    "name": "面孔缝纫师",
+    "hall": 8,
+    "variant": 3,
+    "group": "面孔工坊"
+  },
+  {
+    "id": "tr_cargador",
+    "name": "模具搬运工",
+    "hall": 8,
+    "variant": 4,
+    "group": "面孔工坊"
+  },
+  {
+    "id": "mp_casa",
+    "name": "工头之屋",
+    "hall": 9,
+    "variant": 3,
+    "group": "千足之山"
+  },
+  {
+    "id": "mp_campanario",
+    "name": "钟楼",
+    "hall": 9,
+    "variant": 4,
+    "group": "千足之山"
+  },
+  {
+    "id": "em_acechador",
+    "name": "葬礼潜行者",
+    "hall": 10,
+    "variant": 6,
+    "group": "伏击"
+  },
+  {
+    "id": "em_quebrantahielos",
+    "name": "破冰兽",
+    "hall": 10,
+    "variant": 7,
+    "group": "伏击"
+  }
+]

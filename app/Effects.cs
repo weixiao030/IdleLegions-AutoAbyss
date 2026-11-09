@@ -11,10 +11,11 @@ sealed class Effects
 {
     public double Damage, Life, Defense, Speed, Crit, CritDamage, Leech, Shield, KillHeal, KillImmune, ReactionDamage;
     public double Slow, SlowSeconds, VsSlow, VsStatus, VsElite, Execute, ExecuteAt, RampDefense, RampCap, LowDefense, LowAt;
-    public int Cleave;
-    public bool Freeze, Burn, Lightning, Poison, Taunt;
+    public double Mark, MarkDeepen, VsMarked;
+    public int MarkCap, Cleave;
+    public bool Freeze, Burn, Lightning, Poison, Taunt, ConsumesStatus;
     public List<string> Unknown = [];
-    static string Normalize(string s) => new(s.Normalize(NormalizationForm.FormD).Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).ToArray());
+    internal static string Normalize(string s) => new(s.Normalize(NormalizationForm.FormD).Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).ToArray());
     static double Read(string s, string regex, int group = 1)
     {
         var m = Regex.Match(s, regex); return m.Success && double.TryParse(m.Groups[group].Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var x) ? x : 0;
@@ -26,9 +27,9 @@ sealed class Effects
         foreach (var c in cards)
         {
             var t = Normalize(c.At("desc").S()).ToLowerInvariant();
+            e.Freeze |= Cards.IsCore(c, cfg);
             if (t == "") { e.Unknown.Add(c.At("id").S()); continue; }
             var before = e.Signature();
-            e.Freeze |= Cards.IsCore(c, cfg);
             e.Damage += Read(t, @"\+" + Num + @"% de dano(?! contra| critico| de tus reacciones)") / 100;
             e.Life += Read(t, @"\+" + Num + @"% de vida") / 100;
             e.Defense += Read(t, @"\+" + Num + @"% de defensa") / 100;
@@ -40,10 +41,10 @@ sealed class Effects
             var reaction=Read(t,@"\+"+Num+@"% de dano de tus reacciones");
             e.ReactionDamage+=reaction/100;
             e.Leech += Read(t, @"\+" + Num + @"% de robo de vida") / 100;
-            e.Shield += Read(t, @"escudo del " + Num + @"% de tu vida") / 100;
+            e.Shield += Read(t, @"escudo del " + Num + @"%") / 100;
             e.KillHeal += Read(t, @"matar te cura el " + Num + @"%") / 100;
             e.KillImmune = Math.Max(e.KillImmune,Read(t,@"matar te deja intocable " + Num + @" s"));
-            e.Slow = Math.Max(e.Slow, Read(t, @"(?:ralentizan un |ralentizas un |objetivo un )" + Num + @"%") / 100);
+            e.Slow = Math.Max(e.Slow, Math.Max(Read(t, @"(?:ralentizan un |ralentizas un |objetivo un )" + Num + @"%"), Read(t, @"objetivo un " + Num + @"% mas lento")) / 100);
             if (t.Contains("lent") || t.Contains("ralent")) e.SlowSeconds = Math.Max(e.SlowSeconds, Read(t, @"(?:durante |lento durante )" + Num + @" s"));
             e.VsSlow += (Read(t, @"\+" + Num + @"% de dano contra enemigos lentos") + Read(t, @"pegas \+" + Num + @"% a lo lento")) / 100;
             e.VsStatus += (Read(t, @"\+" + Num + @"% contra lo que lleve un estado") + Read(t, @"\+" + Num + @"% de dano contra lo que lleve un estado") + Read(t, @"pegas \+" + Num + @"% a lo que lleve un estado")) / 100;
@@ -53,17 +54,24 @@ sealed class Effects
             var ramp = Read(t, @"te suma " + Num + @"% de defensa");
             if (ramp > 0) { e.RampDefense += ramp / 100; e.RampCap += Read(t, @"hasta \+" + Num + @"%") / 100; }
             if (t.Contains("defensa sube")) { e.LowAt = Math.Max(e.LowAt, Read(t, @"(?:por debajo del|bajo el) " + Num + @"%") / 100); e.LowDefense += Read(t, @"defensa sube un " + Num + @"%") / 100; }
-            int cleave = (int)(Read(t, @"cada " + Num + @" autoataques") + Read(t, @"cada " + Num + @" tu golpe salta"));
-            if (cleave > 0 && t.Contains("salta a todos")) e.Cleave = e.Cleave == 0 ? cleave : Math.Min(e.Cleave, cleave);
-            e.Burn |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*(?:queman|encienden)");
+            int cleave = (int)Read(t, @"cada " + Num + @" (?:autoataques|tu golpe|saltan)");
+            if (cleave > 0 && (t.Contains("salta a todos") || t.Contains("saltan a todos"))) e.Cleave = e.Cleave == 0 ? cleave : Math.Min(e.Cleave, cleave);
+            e.Burn |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*(?:queman|encienden|ardiendo|arden)");
             e.Lightning |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*(?:electrocutan|electrifican)");
             e.Poison |= Regex.IsMatch(t, @"(?:autoataques|autos|golpes).*envenenan");
+            e.ConsumesStatus |= t.Contains("consumen el estado");
+            bool markSource = t.Contains("golpes marcan") || t.Contains("marcas (+");
+            double mark = Read(t, @"\+" + Num + @"%(?: de dano recibido)? por marca") / 100;
+            if (markSource) e.Mark = Math.Max(e.Mark, mark);
+            else if (t.Contains("marcas mas hondo")) e.MarkDeepen += mark;
+            if (markSource || t.Contains("marcas mas hondo")) e.MarkCap = Math.Max(e.MarkCap, (int)Read(t, @"hasta " + Num));
+            e.VsMarked += Read(t, @"pegas? \+" + Num + @"% (?:a lo|al) marcado") / 100;
             e.Taunt |= t.Contains("fijan al objetivo");
             if (e.Signature() == before && !Cards.IsCore(c,cfg) || new[]{"fervor","devuelves","limpias","siguiente golpe","por cada","contra elites"}.Any(t.Contains)) e.Unknown.Add(c.At("id").S());
         }
         return e;
     }
-    string Signature() => $"{Damage},{Life},{Defense},{Speed},{Crit},{CritDamage},{Leech},{Shield},{KillHeal},{KillImmune},{ReactionDamage},{Slow},{SlowSeconds},{VsSlow},{VsStatus},{VsElite},{Execute},{ExecuteAt},{RampDefense},{RampCap},{LowDefense},{LowAt},{Cleave},{Freeze},{Burn},{Lightning},{Poison},{Taunt}";
+    string Signature() => $"{Damage},{Life},{Defense},{Speed},{Crit},{CritDamage},{Leech},{Shield},{KillHeal},{KillImmune},{ReactionDamage},{Slow},{SlowSeconds},{VsSlow},{VsStatus},{VsElite},{Execute},{ExecuteAt},{RampDefense},{RampCap},{LowDefense},{LowAt},{Cleave},{Freeze},{Burn},{Lightning},{Poison},{Taunt},{ConsumesStatus},{Mark},{MarkDeepen},{MarkCap},{VsMarked}";
     public double Outgoing(bool slow, bool status, double hp, bool elite = false) => (1 + Damage) * (1 + (slow ? VsSlow : 0) + (status ? VsStatus : 0) + (elite ? VsElite : 0) + (hp < ExecuteAt ? Execute : 0));
 }
 
@@ -73,7 +81,8 @@ static class Cards
     {
         var family = c.At("familia").S(); if (family != "") return family;
         var id = c.At("id").S();
-        return id.StartsWith("es") ? "escarcha" : id.StartsWith("br") ? "brasa" : id.StartsWith("fu") ? "fulgor" : "";
+        return id.StartsWith("es") ? "escarcha" : id.StartsWith("br") ? "brasa" : id.StartsWith("fu") ? "fulgor"
+            : id.StartsWith("po") ? "ponzona" : id.StartsWith("um") ? "umbra" : id.StartsWith("au") ? "aurora" : id.StartsWith("ac") ? "acero" : "";
     }
     public static bool IsCore(JsonNode? c, Settings cfg)
     {
@@ -94,37 +103,54 @@ static class Cards
         foreach (var c in offered.Values) prior.AddRange(Enumerable.Repeat(c, Math.Clamp((int)c.At("llevas").N(), 0, 3)));
         return prior.ToArray();
     }
-    public static int Priority(JsonNode c, Settings cfg, JsonNode? run = null, string method = "sima.reliquia")
+    // Acquisition and inheritance use carryable relics as the baseline.
+    // A temporary badge cannot replace a core or shield that must survive the floor.
+    internal static (int Priority, string Reason) BuildValue(JsonNode c, Settings cfg, JsonNode? run, string method)
     {
         var baseline = method == "sima.guarda" && run != null ? Inherited(run)
             : method is "sima.reliquia" or "sima.trade" ? run.At("reliquias").A().ToArray() : Current(run);
-        bool missingCore = !baseline.Any(x => IsCore(x, cfg));
-        if (IsCore(c, cfg) && missingCore) return 2000;
-        if (!cfg.PreferFreezeBuild) return 0;
-        string family = Family(c);
-        if (cfg.AvoidFireLightning && family is "brasa" or "fulgor") return -100;
-        if (missingCore && family == "escarcha") return 1000;
+        var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);
-        var desc = c.At("desc").S().ToLowerInvariant() + c.At("descZh").S();
-        if (fx.Crit > 0 || fx.CritDamage > 0 || desc.Contains("hace crítico") || desc.Contains("hace critico") || desc.Contains("暴击") || desc.Contains("暴伤")) return 800;
-        bool damage = fx.Damage > 0 || fx.VsSlow > 0 || fx.VsStatus > 0 || fx.VsElite > 0 || fx.Execute > 0;
-        if (damage && fx.Cleave > 0) return 600;
-        if (fx.Cleave > 0) return 500;
-        if (damage) return 400;
-        return family == "escarcha" ? 200 : 100;
+        bool core = IsCore(c, cfg), missingCore = !baseline.Any(x => IsCore(x, cfg));
+        bool advanced = core && fx.Cleave is > 0 and <= 5;
+        if (missingCore && core) return (advanced ? 2200 : 2000, method == "sima.guarda"
+            ? "先保留普攻冻结核心，保证下一层仍能冻结；传说冻结加五次弹跳最优"
+            : "先拿可继承的普攻冻结核心；传说冻结加五次弹跳最优，本层徽章不替代它");
+        if (!cfg.PreferFreezeBuild) return (0, "按模拟收益比较");
+        // Only actual state-consuming attacks conflict with freeze. Family labels
+        // do not disqualify fire status damage or lightning cleave.
+        if (cfg.AvoidFireLightning && (fx.Burn || fx.Lightning || fx.ConsumesStatus))
+            return (-100, "普攻会消耗冻结或触发火雷反应，降低优先级；纯增伤和弹跳不受影响");
+        if (advanced && (held.Cleave == 0 || held.Cleave > 5))
+            return (2100, "升级为传说普攻冻结加每五次攻击弹跳");
+        string family = Family(c);
+        if (missingCore && family == "escarcha") return (1000, "缺可继承冻结核心：先积累寒冷，优先减速、减速增伤和弹跳");
+        if (!missingCore && fx.Shield > 0 && held.Shield == 0)
+            return (1600, "已有冻结核心：补一张开局护盾并保留到下一层，晨昏同样适用");
+        int support = missingCore ? 800 : 1400;
+        if (fx.Slow > held.Slow && held.Slow == 0)
+            return (support, "先补减速来源，让减速增伤与冻结控制形成配合");
+        if (fx.VsSlow > 0 && (!missingCore || held.Slow > 0))
+            return (support - 100, "优先减速增伤，冻结也能满足模型中的减速目标条件");
+        if (fx.VsStatus > 0)
+            return (support - 120 + (family == "ponzona" ? 10 : 0), "优先异常状态增伤，毒火纯增伤均可搭配冻结");
+        if (fx.Cleave > 0 && (held.Cleave == 0 || fx.Cleave < held.Cleave))
+            return (support - 150, "补充或加快普攻弹跳，冰毒电均可参与构筑");
+        if (fx.Slow > held.Slow) return (support - 180, "提高已有减速强度");
+        // Once one carryable opening shield exists, do not spend the next
+        // inheritance slot chasing another shield ahead of useful build effects.
+        if (fx.Shield > 0 && held.Shield > 0) return (100, "已有可保留的开局护盾，优先把名额留给控制、增伤和弹跳");
+        if (core) return (200, "已有冻结核心和同等弹跳，不重复优先占用构筑名额");
+        if (family == "escarcha") return (600, "主效果未出现时优先补寒冷系列");
+        if (family == "ponzona") return (550, "寒冷关键牌未出现时优先毒系补充");
+        bool markSource = held.Mark > 0 || method != "sima.guarda" && run.At("heroes").A().Any(h => h.At("marca").B());
+        if (fx.Mark > 0) return (450, "冰毒关键效果未出现：补暗影标记来源");
+        if ((fx.MarkDeepen > 0 || fx.VsMarked > 0) && markSource) return (440, "已有标记来源：补标记加深或对标记增伤");
+        if (fx.Crit > 0 || fx.CritDamage > 0) return (350, "控制、异常增伤与弹跳之后，用双暴补输出");
+        return (100, "其他补充效果，同级比较模拟收益");
     }
-    public static string Reason(JsonNode c, Settings cfg, JsonNode run, string method) => Priority(c, cfg, run, method) switch
-    {
-        2000 => method == "sima.guarda" ? "下一层缺冻结核心：优先占用唯一继承名额" : method == "sima.reliquia" ? "优先取得可继承的普攻冻结牌，本层徽章不替代它" : "优先取得缺失的普攻冻结核心",
-        1000 => "缺少可保留的冻结核心：优先积累寒冷系列",
-        800 => "冻结基础已具备：优先暴击与暴击伤害",
-        600 => "伤害与弹跳组合",
-        500 => "弹跳或群体普攻",
-        400 => "伤害加成",
-        200 => "其他寒冷效果，同级比较模拟收益",
-        -100 => "火雷系列回避，只有缺少其他选择时使用",
-        _ => "同级比较模拟收益"
-    };
+    public static int Priority(JsonNode c, Settings cfg, JsonNode? run = null, string method = "sima.reliquia") => BuildValue(c, cfg, run, method).Priority;
+    public static string Reason(JsonNode c, Settings cfg, JsonNode run, string method) => BuildValue(c, cfg, run, method).Reason;
     public static string? InheritanceError(JsonNode before, JsonNode? next, JsonNode card, Settings cfg)
     {
         if (next == null) return "继承成功回执未包含下一深度状态，已暂停核对。";

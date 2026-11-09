@@ -43,7 +43,15 @@ sealed class Pilot
         if (Directory.Exists(reports)) reportPath = Directory.GetFiles(reports, "*.md").Order().LastOrDefault() ?? "";
     }
     Settings LoadConfig() { try { var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(Paths.Config), J.Options)!; if (!Settings.ValidFormation(s.Formation)) s.Formation = new Settings().Formation; s.Validate(); return s; } catch { return new(); } }
-    public void Save(Settings cfg) { if (Active) throw new Exception("请暂停后再修改参数。"); cfg.Validate(); Config = cfg; J.Write(Paths.Config, cfg); Note("参数已保存"); }
+    public void Save(Settings cfg) { if (Active) throw new Exception("请暂停后再修改参数。"); cfg.Validate(); J.Write(Paths.Config, cfg); Config = cfg; Note("参数已保存"); }
+    public void SaveFormation(string[]? formation)
+    {
+        if (!Settings.ValidFormation(formation)) throw new Exception("请选择 4 个不同职业，按前排到后排排列。");
+        var next = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(Config, J.Options), J.Options)!;
+        next.Formation = formation!.ToArray();
+        Save(next);
+        Note("站位已保存：" + string.Join(" → ", formation!.Select(FormationRules.Name)) + "；下次入场生效。");
+    }
     public void Note(string text, string level = "info")
     {
         var entry = new { time = DateTimeOffset.Now, text, level }; logs.Enqueue(entry);
@@ -118,7 +126,7 @@ sealed class Pilot
         var run = s.At("sima", "run");
         maxDepth = Math.Max(maxDepth, (int)run.At("profundidad").N());
         coreAcquired |= run.At("reliquias").A().Concat(run.At("blasones").A()).Any(x => Cards.IsCore(x, Config));
-        if (!preview && run != null)
+        if (run != null && (!preview || Config.AvoidEliteIds.Length > 0))
         {
             var node = run.At("nodo").S();
             var needed = run.At("destinos").A().Select(x => x.S()).Append(node).Where(x => x != "").Distinct();
@@ -207,7 +215,7 @@ sealed class Pilot
             Note(message);
         }
     }
-    Choice[] Build(JsonNode s)
+    internal Choice[] Build(JsonNode s)
     {
         var run = s.At("sima", "run");
         if (run == null)
@@ -243,25 +251,11 @@ sealed class Pilot
             return [new("有冻结，缔结契约：" + J.Name(run.At("pacto")), "sima.pacto", new(), .5, .4)];
         if (type == "presagio" && !done)
         {
-            var ops = s.At("omen", "opciones").A().ToArray();
-            if (ops.Length == 0) return [new("查看迷雾事件", "sima.omen", new() { ["opcion"] = "" })];
-            return ops.Select(o =>
-            {
-                var t = J.Text(o); var pass = o.At("id").S() == "pasar";
-                var danger = new[] { "vida", "daño", "pierde", "sacrific", "combate", "muerte", "生命", "失去", "战斗" }.Any(t.Contains) ? .7 : .1;
-                return new Choice("事件：" + J.Name(o), "sima.omen", new() { ["opcion"] = o.At("id").S() }, pass ? .2 : .5, pass ? 0 : danger);
-            }).ToArray();
+            return EventRules.Choices(s);
         }
         if (type == "santuario" && !done)
         {
-            var result = new List<Choice>();
-            var sant = run.At("santuario");
-            if (down != null && sant.At("levanta").B()) result.Add(new("圣所：复活", "sima.rest", new() { ["opcion"] = "levantar" }, 2));
-            if (sant.At("reposarPct").N() > 0) result.Add(new("圣所：恢复生命", "sima.rest", new() { ["opcion"] = "reposar" }, 1 - heroesInRun.Average(h => h.At("hp").N() / Math.Max(1, h.At("hpMax").N()))));
-            result.Add(new("圣所：恢复魂力", "sima.rest", new() { ["opcion"] = "meditar" }, (100 - heroesInRun.Average(h => h.At("anima").N())) / 180));
-            foreach (var hero in heroesInRun.Where(h => !h.At("caido").B()))
-                result.Add(new("圣所：磨利强化 " + J.Name(hero), "sima.rest", new() { ["opcion"] = "afilar", ["heroId"] = hero.At("id").S() }));
-            return result.ToArray();
+            return SanctuaryChoices(s, run);
         }
         if (type == "chatarrero")
         {
@@ -279,10 +273,12 @@ sealed class Pilot
             foreach (var card in run.At("tienda", "buffs").A())
             {
                 var bid = "buff:" + card.At("id").S(); var rated = Cards.Rate(card, Config);
+                // One carryable opening shield is enough for this build.
+                if (Config.PreferFreezeBuild && Effects.Parse([card], Config).Shield > 0 && Effects.Parse(run.At("reliquias").A(), Config).Shield > 0) continue;
                 if (rated.Value < 0 || bought.Contains(id + ":" + bid) || completed.Contains(run.At("id").S() + ":" + id + ":" + bid)) continue;
                 shop.Add(new("商店：" + J.Name(card), "sima.trade", new() { ["oferta"] = bid }, rated.Value, 0, rated.Core, Cards.Priority(card, Config, run, "sima.trade"), card) { Reason = Cards.Reason(card, Config, run, "sima.trade") });
             }
-            if (shop.Count > 0) { foreach (var dest in run.At("destinos").A()) shop.Add(RouteChoice(run, dest.S(), Config)); return shop.ToArray(); }
+            if (shop.Count > 0) { foreach (var dest in run.At("destinos").A()) shop.Add(RouteChoice(run, dest.S(), Config, s)); return shop.ToArray(); }
         }
         if (!done && type is "combate" or "elite" or "jefe") return FightChoices(s, run, id);
         if (!done && type == "osario")
@@ -296,12 +292,42 @@ sealed class Pilot
         {
             var node = run.At("mapa", "nodos", dest); var kind = node.At("tipo").S();
             if (kind == "elite" && !Config.AllowElite || node.At("emboscada").B() && !Config.AllowAmbush) continue;
-            moves.Add(RouteChoice(run, dest, Config));
+            moves.Add(RouteChoice(run, dest, Config, s));
         }
         // If every path has a normally avoided room, continue along the least risky
         // legal path. A route preference must never turn into an extract command.
-        if (moves.Count == 0) foreach (var dest in destinations) moves.Add(new("必经路线：" + dest, "sima.move", new() { ["nodoId"] = dest }, 0, .8));
+        if (moves.Count == 0) foreach (var dest in destinations) moves.Add(RouteChoice(run, dest, Config, s));
         return moves.ToArray();
+    }
+    internal static Choice[] SanctuaryChoices(JsonNode snapshot, JsonNode run)
+    {
+        var result = new List<Choice>();
+        var members = run.At("heroes").A().ToArray();
+        var alive = members.Where(h => !h.At("caido").B()).ToArray();
+        var sant = run.At("santuario");
+        bool down = members.Any(h => h.At("caido").B());
+        if (down && sant.At("levanta").B())
+            result.Add(new("圣所：复活", "sima.rest", new() { ["opcion"] = "levantar" }, 2, priority: 40) { Reason = "先恢复倒地队员" });
+        if (alive.Length == 0) return result.ToArray();
+        var ratios = alive.Select(h => Math.Clamp(h.At("hp").N() / Math.Max(1, h.At("hpMax").N()), 0, 1)).ToArray();
+        var anima = alive.Select(h => Math.Clamp(h.At("anima").N(100), 0, 100)).ToArray();
+        bool healthy = !down && ratios.Min() >= .8 && ratios.Average() >= .9;
+        bool ready = anima.Min() >= 50 && anima.Average() >= 70;
+        bool urgentHeal = ratios.Min() < .6 || ratios.Average() < .75;
+        if (sant.At("reposarPct").N() > 0)
+            result.Add(new("圣所：恢复生命", "sima.rest", new() { ["opcion"] = "reposar" }, 1 - ratios.Average(), priority: urgentHeal ? 30 : 0)
+            { Reason = urgentHeal ? "存在明显生命缺口，优先补给" : "生命缺口与下一战收益比较" });
+        result.Add(new("圣所：恢复魂力", "sima.rest", new() { ["opcion"] = "meditar" }, (100 - anima.Average()) / 180, priority: healthy && !ready ? 25 : 0)
+        { Reason = healthy && !ready ? "魂力偏低，先补足技能启动资源" : "魂力的小缺口不压过可保留的磨利强化" });
+        foreach (var hero in alive)
+        {
+            var live = snapshot.At("heroes").A().FirstOrDefault(h => h.At("id").S() == hero.At("id").S());
+            double potential = Simulation.SharpenPotential(live);
+            result.Add(new("圣所：磨利强化 " + J.Name(hero), "sima.rest", new() { ["opcion"] = "afilar", ["heroId"] = hero.At("id").S() },
+                Math.Min(.8, potential * .08), priority: healthy && ready && potential > 0 ? 20 : 0)
+            { Reason = "磨利每层增加此英雄 8% 技能伤害并随下潜保留；优先有伤害技能的队员，普攻不受益" });
+        }
+        return result.ToArray();
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
@@ -337,7 +363,7 @@ sealed class Pilot
         double own=nd.At("tipo").S() is "combate" or "elite" or "jefe" || nd.At("emboscada").B()?1:0;
         return own+(next.Length==0?0:next.Min(x=>RemainingFights(run,x,new HashSet<string>(visited))));
     }
-    internal static Choice RouteChoice(JsonNode run, string dest, Settings cfg)
+    internal static Choice RouteChoice(JsonNode run, string dest, Settings cfg, JsonNode? snapshot = null)
     {
         var node = run.At("mapa", "nodos", dest); var kind = node.At("tipo").S();
         bool battle = kind is "combate" or "elite" or "jefe" || kind == "osario" && node.At("emboscada").B();
@@ -350,7 +376,14 @@ sealed class Pilot
         double risk = battle ? avoid ? 4 : .15 : 0;
         if (avoid) risk += RemainingFights(run,dest,new HashSet<string>()) * 1.5;
         string mode = farm ? "核心/碎屑奖励" : avoid ? "避战路线" : "常规路线";
-        return new($"{mode}：{dest} · {kind}", "sima.move", new() { ["nodoId"] = dest }, benefit, risk);
+        var avoided = EliteRules.Avoided(snapshot.At("peeks", dest), cfg);
+        // A finite penalty competes with survival and rewards. Never delete a
+        // legal route or pause just because it contains a selected elite.
+        if (avoided.Length > 0) risk += 40;
+        return new($"{mode}：{dest} · {kind}", "sima.move", new() { ["nodoId"] = dest }, benefit, risk)
+        {
+            Reason = avoided.Length == 0 ? "" : "优先避让：" + string.Join("、", avoided.Select(e => e.Name)) + "；必经或明显更安全时仍可前进"
+        };
     }
     internal static Choice[] Rank(Choice[] candidates) => candidates.OrderByDescending(c => c.Priority).ThenByDescending(c => c.Forecast?.Score ?? c.Benefit).ToArray();
     internal static bool ShouldPact(JsonNode run, Settings cfg) => cfg.AutoPactWithFreeze && cfg.PactFloors > 0
@@ -384,8 +417,7 @@ sealed class Pilot
     }
     JsonNode[] Team(JsonNode s)
     {
-        var heroes = s.At("heroes").A().ToArray();
-        return Config.Formation.Select(def => heroes.FirstOrDefault(h => h.At("defId").S() == def) ?? throw new Exception("缺少阵容职业 " + def + "，请修改阵容参数。")).ToArray();
+        return FormationRules.ResolveHeroes(Config.Formation, s);
     }
     public async Task Prepare(CancellationToken ct)
     {
