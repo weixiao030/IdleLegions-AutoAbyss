@@ -93,3 +93,10 @@
 .dark .nav-item.selected,.dark .strategy-tag,.dark .brand-mark,.dark .text-link,.dark .decision-icon,.dark .core-status.acquired,.dark .report-empty svg,.dark footer>svg{color:#80d0dc}
 .dark .map-node.reachable:not(.current){color:#80d0dc}
 .dark .autosave-status.saved{color:#80d0dc}
+
+/* Pagination stays outside the horizontally scrolling table. */
+.report-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;padding-top:16px;margin-top:8px;border-top:1px solid var(--line)}
+.report-page-summary{display:grid;gap:5px;font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums;color:var(--muted)}
+.report-page-summary>span:first-child{color:var(--ink);font-weight:500}
+.report-page-buttons{display:flex;gap:10px;flex-shrink:0}.report-page-buttons .rt-Button{white-space:nowrap}
+@media(max-width:640px){.report-pagination{align-items:flex-start;gap:12px}.report-page-summary{width:100%;font-size:11px}.report-page-buttons{width:100%;justify-content:flex-end}}

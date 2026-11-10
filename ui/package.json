@@ -1,9 +1,10 @@
 {
   "name": "idlelegions-autoabyss",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build"
   },

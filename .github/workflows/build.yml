@@ -22,6 +22,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Frontend regression tests
+        shell: pwsh
+        run: |
+          Push-Location ui
+          npm.cmd ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+          npm.cmd test
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend regression tests failed' }
+          Pop-Location
       - name: Build self-contained EXE
         shell: pwsh
         run: ./build.ps1
@@ -35,5 +44,5 @@ jobs:
         run: python tools/package_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: IdleLegions-AutoAbyss-v1.3.6-win-x64
+          name: IdleLegions-AutoAbyss-v1.3.7-win-x64
           path: artifacts/*

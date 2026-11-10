@@ -9,11 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / 'release'
 ARTIFACTS = ROOT / 'artifacts'
-NAME = 'IdleLegions-AutoAbyss-v1.3.6-win-x64.zip'
-PREFIX = 'IdleLegions自动下井-v1.3.6/'
+NAME = 'IdleLegions-AutoAbyss-v1.3.7-win-x64.zip'
+PREFIX = 'IdleLegions自动下井-v1.3.7/'
 DOCS = ['使用说明.md', '模型说明.md', '历史实测报告-v0.4.3.md',
-        '发布验证-1.0.md', '发布验证-1.1.md', '发布验证-1.2.md', '发布验证-1.3.md', '发布验证-1.3.1.md', '发布验证-1.3.2.md', '发布验证-1.3.3.md', '发布验证-1.3.4.md', '发布验证-1.3.5.md', '发布验证-1.3.6.md', 'ICE方案与战报-20261110.md', '第三方组件.txt', '默认参数.json',
-        'dotnet-LICENSE.txt', 'dotnet-ThirdPartyNotices.txt']
+        '发布验证-1.0.md', '发布验证-1.1.md', '发布验证-1.2.md', '发布验证-1.3.md', '发布验证-1.3.1.md', '发布验证-1.3.2.md', '发布验证-1.3.3.md', '发布验证-1.3.4.md', '发布验证-1.3.5.md', '发布验证-1.3.6.md', '发布验证-1.3.7.md', 'ICE方案与战报-20261110.md', '第三方组件.txt', '默认参数.json',
+        'dotnet-LICENSE.txt', 'dotnet-ThirdPartyNotices.txt', '启动说明.txt']
 
 def digest(path):
     with path.open('rb') as stream:
@@ -33,7 +33,10 @@ def main():
     for name in DOCS:
         shutil.copy2(ROOT / 'docs' / name, RELEASE / name)
     shutil.copy2(ROOT / 'LICENSE', RELEASE / 'LICENSE.txt')
-    files = ['IdleLegions自动下井.exe', *DOCS, 'LICENSE.txt']
+    shutil.copy2(ROOT / 'CHANGELOG.md', RELEASE / 'CHANGELOG.md')
+    (RELEASE / 'bridge').mkdir(exist_ok=True)
+    shutil.copy2(ROOT / 'bridge' / 'frost_bridge.gd', RELEASE / 'bridge' / 'frost_bridge.gd')
+    files = ['IdleLegions自动下井.exe', *DOCS, 'LICENSE.txt', 'CHANGELOG.md', 'bridge/frost_bridge.gd']
     hashes = {name: digest(RELEASE / name) for name in files}
     atomic_text(RELEASE / 'SHA256SUMS.txt', ''.join(f'{value}  {name}\n' for name, value in hashes.items()))
     files.append('SHA256SUMS.txt')
