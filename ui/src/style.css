@@ -100,3 +100,13 @@
 .report-page-summary>span:first-child{color:var(--ink);font-weight:500}
 .report-page-buttons{display:flex;gap:10px;flex-shrink:0}.report-page-buttons .rt-Button{white-space:nowrap}
 @media(max-width:640px){.report-pagination{align-items:flex-start;gap:12px}.report-page-summary{width:100%;font-size:11px}.report-page-buttons{width:100%;justify-content:flex-end}}
+
+/* Combat report metrics: compact Chinese units and actual percentage tracks. */
+.report-number,.report-share{font-variant-numeric:tabular-nums;white-space:nowrap}
+.report-share{display:inline-flex;align-items:center;justify-content:flex-end;gap:9px;min-width:98px;vertical-align:middle}
+.report-share-track{width:52px;flex:none;height:6px}.report-share-value{min-width:4ch;text-align:right}
+.report-section td:has(>.report-number),.report-section td:has(>.report-share){text-align:right;white-space:nowrap}
+.report-summary-table th:not(:first-child),.report-summary-table td{text-align:right}
+.report-summary-table th[scope=row]{text-align:left;font-weight:600}
+.report-section .report-summary-table tbody tr.report-top-output{background:var(--tint)}
+.report-section .report-summary-table th,.report-section .report-summary-table td{padding-top:12px;padding-bottom:12px}
