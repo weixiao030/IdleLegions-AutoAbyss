@@ -89,6 +89,7 @@
 @media(max-width:640px){.app-shell{display:block}.sidebar{position:static;flex-direction:row;height:auto;padding:12px 16px}.brand{margin:0}.sidebar nav{gap:3px}.nav-item{padding:10px}.topbar{height:54px;padding:0 16px;gap:12px}.topbar-tools{gap:8px}.connection{font-size:10px;gap:6px}.breadcrumb{font-size:11px}.app-version{font-size:11px;padding:4px 6px}.page{padding:24px 16px 0}.page-title{margin-bottom:20px}.page-title h1{font-size:24px}.command-options{grid-template-columns:1fr;gap:22px;padding:20px}.command-launch{padding:16px 20px;flex-wrap:wrap;gap:14px}.command-launch .launch-status{flex-basis:100%;justify-content:flex-start}.command-launch .primary-action{flex:1;min-width:130px}.command-footer{padding:13px 20px;font-size:11px;gap:7px}.command-footer .autosave-status{font-size:11px}.strategy-picker{grid-template-columns:1fr;gap:9px;padding:20px}.strategy-picker>p{grid-column:auto}.journey,.map-section,.team-section,.forecast-section,.relic-section,.report-section{padding:20px}.control-grid,.lower-grid{gap:18px}.field-control{width:110px}.settings-section{padding:20px}.settings-disclosure .section-desc{font-size:12px}.field-label small{font-size:11px}.settings-layout{gap:0}.report-toolbar{gap:14px}.report-toolbar>span{flex-basis:100%}.setup-panel{padding:0 20px}.topbar-theme{width:24px}.series-progress{padding:18px}.brand-mark{width:32px;height:32px}.formation-move .rt-Button{padding:0 3px}.formation-move{gap:6px}.formation-rows{gap:24px}.formation-row{gap:14px}.hero-heading>span{font-size:10px}}
 
 .command-panel .strategy-picker{grid-template-columns:minmax(0,1fr);align-items:start}
+.series-inherited{grid-column:1/-1;color:var(--muted);font-size:11px}.series-progress>.footnote{margin-bottom:0}.series-progress .section-bar{flex-wrap:wrap;gap:8px}
 
 .dark .nav-item.selected,.dark .strategy-tag,.dark .brand-mark,.dark .text-link,.dark .decision-icon,.dark .core-status.acquired,.dark .report-empty svg,.dark footer>svg{color:#80d0dc}
 .dark .map-node.reachable:not(.current){color:#80d0dc}
@@ -128,3 +129,18 @@
 .report-disclosure[open]>summary>svg{transform:none}.report-disclosure-content{padding-top:22px}.report-disclosure-content>.report-section{padding:20px 0;border:0;border-radius:0;border-top:1px solid var(--line);margin-bottom:0;background:none}
 @media(max-width:640px){.report-disclosure>summary{flex-wrap:wrap;gap:10px}.report-disclosure>summary .muted{order:3;flex-basis:100%;font-size:11px}.hero-damage-details{padding:16px}.hero-damage-details .report-share-track{width:120px}}
 @media(prefers-reduced-motion:reduce){.hero-detail-toggle svg,.report-disclosure>summary>svg{transition:none}}
+
+/* Progressive detail keeps the report readable while retaining event evidence. */
+.damage-source-toggle{display:inline-flex;align-items:center;gap:6px;border:0;background:none;color:var(--accent-11);font:inherit;font-weight:600;text-align:left;padding:2px 0;cursor:pointer}
+.damage-source-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+.damage-source-toggle:focus-visible{outline:2px solid var(--accent-9);outline-offset:4px}
+.damage-source-panel{padding:14px 12px 18px;background:var(--gray-2);white-space:normal}
+.damage-stat-list{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:14px 22px;margin:0 0 20px}
+.damage-stat-list dt{font-size:12px;color:var(--gray-11);margin-bottom:5px}
+.damage-stat-list dd{margin:0;font-variant-numeric:tabular-nums}
+.damage-effect{line-height:1.7;margin:0 0 18px;color:var(--gray-12)}
+.damage-element-list{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:12px;padding:14px 0}
+.damage-extra-disclosure,.damage-related-tags{margin-top:16px;padding-top:12px;border-top:1px solid var(--gray-5)}
+.damage-extra-disclosure>summary,.damage-related-tags>summary{cursor:pointer;font-size:13px;font-weight:600;padding:6px 0 12px}
+.damage-breakdown-row>td{padding:0!important}
+@media(max-width:640px){.damage-stat-list{grid-template-columns:repeat(2,minmax(120px,1fr))}.damage-source-panel{padding:12px 8px}}

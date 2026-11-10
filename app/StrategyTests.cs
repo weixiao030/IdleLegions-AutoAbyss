@@ -94,6 +94,26 @@ static class StrategyTests
         check(IcePick(otherFamily, readyFamily).Card!.At("id").S() == "um_series_next", "光耀8张后不再抢系列名额，继续补未满8张的暗影");
         var inheritedSeries = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray([core.DeepClone(), .. Enumerable.Range(0, 8).Select(i => Card("au_held_" + i, "aurora", "+1% de daño")), readyFamily.DeepClone()]), ["llegada"] = new JsonObject { ["reliquias"] = 9 } };
         check(Pilot.Rank(icePilot.CardChoices([otherFamily, readyFamily], "sima.guarda", inheritedSeries))[0].Card!.At("id").S() == "um_series_next", "继承只按真正旧遗物计算系列进度，不把本章全部新增卡当已继承");
+        var lowLifeShadow = Card("um_low_life", "umbra", "Si tu vida está por debajo del 25%, +40% de daño");
+        iceRun["reliquias"] = new JsonArray([core.DeepClone(), bounce4.DeepClone(), bounce5.DeepClone(), bounce6.DeepClone(), crit8.DeepClone(), crit10.DeepClone(), lowLifeShadow.DeepClone()]);
+        var repeatLowLife = Card("um_low_life_repeat", "umbra", "Si tu vida está por debajo del 25%, +40% de daño");
+        check(IcePick(repeatLowLife, otherFamily).Card!.At("id").S() == "au_series_next", "暗影低血增伤满足一次后停止无限压过系列补齐");
+        var heldDeepen = Card("um_deepen_held", "umbra", "Marcas más hondo: +2% de daño recibido por marca, hasta 5");
+        iceRun["reliquias"]!.AsArray().Add(heldDeepen.DeepClone());
+        var repeatDeepen = Card("um_deepen_repeat", "umbra", "Marcas más hondo: +2% de daño recibido por marca, hasta 5");
+        check(IcePick(repeatDeepen, otherFamily).Card!.At("id").S() == "au_series_next", "暗影标记加深满足一次后不再无限重复争抢系列名额");
+        iceRun["reliquias"] = new JsonArray([core.DeepClone(), .. Enumerable.Repeat(Card("br_stack", "brasa", "+1% de daño"), 3).Select(c => c.DeepClone())]);
+        var fourthSameRelic = Card("br_stack", "brasa", "+1% de daño");
+        check(icePilot.CardChoices([fourthSameRelic, otherFamily], "sima.reliquia", iceRun)
+                .Any(c => c.Card!.At("id").S() == "br_stack" && !c.Label.Contains("兜底")),
+            "同种遗物超过3张仍允许本层继续获取，继承上限不误当成获取上限");
+        var cappedInheritance = Card("br_capped", "brasa", "+1% de daño"); cappedInheritance["llevas"] = 3;
+        var openInheritance = Card("au_open", "aurora", "+1% de daño"); openInheritance["llevas"] = 0;
+        var carryRun = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(core.DeepClone(), cappedInheritance.DeepClone()),
+            ["llegada"] = new JsonObject { ["reliquias"] = 2 }, ["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(cappedInheritance.DeepClone(), openInheritance.DeepClone()) } };
+        check(IceStrategyRules.SkipReason(cappedInheritance, carryRun, iceCfg, "sima.guarda") != null
+                && IceStrategyRules.SkipReason(cappedInheritance, carryRun, iceCfg, "sima.reliquia") == null,
+            "三层限制只用于继承选择，不误伤本层普通遗物选择");
         // Screenshot numbers mean left-to-right. IDs below are local fixtures;
         // selection must work from Chinese or Spanish effects even for new IDs.
         var screenshotEffects = new (string Family, string Zh, string Es)[][]

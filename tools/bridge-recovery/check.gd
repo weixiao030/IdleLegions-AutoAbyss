@@ -67,6 +67,10 @@ func _ready() -> void:
 	TranslationServer.set_locale("zh_CN")
 	game.content = {"heroCatalog": [{"defId": "fixture-class", "skills": [{"id": "strike", "name": "Catalog Strike"}, {"id": "catalog-only", "name": "Catalog Only"}]}, {"defId": "another-class", "skills": [{"id": "unrelated", "name": "Unrelated Skill"}]}], "reactions": [{"id": "shatter", "name": "Fixture Reaction"}]}
 	game.state.heroes = [{"id": "fixture-hero", "skills": [{"id": "strike", "name": "Fixture Strike"}]}]
+	game.state.heroes[0].defId = "fixture-class"
+	game.state.heroes[0].stats = {"atk": 120, "token": "must-not-survive"}
+	game.state.heroes[0].skills[0].desc = "310%"
+	game.state.heroes.append({"id": "unrelated-hero", "stats": {"atk": 999}})
 	var roster: Dictionary = {"heroes": [{"id": "fixture-hero", "defId": "fixture-class"}]}
 	var names: Dictionary = bridge._battle_labels(roster, game.state)
 	check(names.skills["fixture-hero"].strike == "夹具斩击", "Names use current hero skills and the game locale")
@@ -74,6 +78,11 @@ func _ready() -> void:
 	check(not names.skills["fixture-hero"].has("unrelated"), "Other hero classes cannot supply skill attribution")
 	check(names.reactions.shatter == "夹具反应", "Reaction names use the game reaction catalog and locale")
 	check(bridge._battle_labels({}, {}).skills.is_empty(), "Missing roster never fabricates skill attribution")
+	var context: Dictionary = bridge._battle_context(roster, game.state)
+	game.state.heroes[0].stats.atk = 140
+	game.state.heroes[0].skills[0].desc = "320%"
+	check(context.heroes.size() == 1 and context.heroes[0].stats.atk == 120 and context.heroes[0].skills[0].desc == "310%", "Pre-command context freezes nested stats and skills; excludes unrelated heroes")
+	check(context.heroes[0].stats.token == "<redacted>", "Context redacts nested credential fields")
 	net._response_arrived.connect(bridge._capture)
 	var panel: FakePanel = FakePanel.new()
 	add_child(panel)
@@ -100,6 +109,8 @@ func _ready() -> void:
 	check(snap.lastBattle.labels.skills["fixture-hero"].strike == "夹具斩击" and snap.lastBattle.labels.reactions.shatter == "夹具反应", "Battle archives its own skill and reaction labels")
 	game.state.heroes[0].skills[0].name = "Changed after battle"
 	check(snap.lastBattle.labels.skills["fixture-hero"].strike == "夹具斩击", "Later hero changes cannot rename historical battle labels")
+	game.state.heroes[0].stats.atk = 999
+	check(bridge.last_battle.context.heroes[0].stats.atk == 140 and snap.lastBattle.context.heroes[0].skills[0].desc == "320%", "Archived battle context survives later live-state mutations")
 	check(bridge.receipt.ok and net._results.is_empty(), "Receipt is captured before Net consumes its response dictionary")
 	cmd.id = "refresh-a"
 	cmd.method = "local.refresh"

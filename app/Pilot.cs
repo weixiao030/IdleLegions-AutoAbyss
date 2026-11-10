@@ -50,7 +50,7 @@ sealed class Pilot
         // old receipts never resume commands or mark operations completed.
         var previous = J.Read(Path.Combine(Paths.Data, "last-session.json"));
         foreach (var row in previous.At("battleRecords").A().OfType<JsonObject>())
-            battleRecords.Enqueue((JsonObject)row.DeepClone());
+            battleRecords.Enqueue(BattleJournal.Upgrade(row));
         foreach (var row in previous.At("receipts").A()) receipts.Enqueue(row.DeepClone());
         Bridge.RetryTimeouts = Config.RetryTimeouts;
         Bridge.Notice = text => { phase = "超时恢复中"; message = text; Note(text); };
@@ -69,7 +69,7 @@ sealed class Pilot
     }
     public void Note(string text, string level = "info")
     {
-        var entry = new { time = DateTimeOffset.Now, text, level }; logs.Enqueue(entry);
+        var entry = new { time = DateTimeOffset.Now, text = GameText.Text(text), level }; logs.Enqueue(entry);
         while (logs.Count > 160) logs.TryDequeue(out _);
         try { File.AppendAllText(Path.Combine(Paths.Data, "pilot-" + DateTime.Now.ToString("yyyyMMdd") + ".jsonl"), JsonSerializer.Serialize(entry, J.Options) + "\n"); } catch { }
     }
@@ -83,7 +83,7 @@ sealed class Pilot
             foreach (var h in root.At("heroes").A()) foreach (var skill in h.At("skills").A()) if (skill is JsonObject sk) { sk.Remove("conds"); sk.Remove("focusOpts"); sk.Remove("pvpDesc"); }
         }
         var runState = s.At("sima", "run");
-        return new { bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message, connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { c.Label, c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
+        return new { bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
     }
     public void Pause() { if (!Active) return; cancel?.Cancel(); phase = "正在暂停"; message = "等待当前操作回执后停止，不会再派发新操作。"; }
     public void Start(bool preview = false, LoopRequest? loop = null)
@@ -209,7 +209,7 @@ sealed class Pilot
             var error = RevivalRules.Error(run, after.At("sima", "run"), pick.Args.At("heroId").S());
             if (error != null) throw new Exception(error);
         }
-        receipts.Enqueue(new { round = runs + 1, depth = (int)run.At("profundidad").N(), recovered = outcome.At("recovered").B(), time = DateTimeOffset.Now, pick.Method, pick.Args, pick.Label, prediction = pick.Forecast, priority = pick.Priority, reason = pick.Reason, cardId = pick.Card.At("id").S(), cardName = pick.Card == null ? "" : J.Name(pick.Card), cardDescription = pick.Card.At("descZh").S(pick.Card.At("desc").S()), options = candidates.Where(c => c.Card != null).Select(c => new { id = c.Card.At("id").S(), c.Priority, c.Reason }).ToArray(), inheritance = pick.Method == "sima.guarda" ? new { fromDepth = run.At("profundidad").N(), toDepth = after.At("sima", "run", "profundidad").N(), before = Cards.Inherited(run!).Select(c => c.At("id").S()).ToArray(), after = after.At("sima", "run", "reliquias").A().Select(c => c.At("id").S()).ToArray() } : null, confirmed = true, equipmentLoot = DropJournal.ForCommand(after, outcome), obolsSpent = pick.Method == "sima.trade" ? Math.Max(0, beforeLoot.At("obolos").N() - after.At("sima", "run", "botin", "obolos").N()) : 0, loot = new { cores = Math.Max(0, after.At("sima", "run", "botin", "nucleos").N() - beforeLoot.At("nucleos").N()), shards = Math.Max(0, after.At("sima", "run", "botin", "esquirlas").N() - beforeLoot.At("esquirlas").N()) }, run = beforeRun, node = run.At("nodo").S(), nextRun = after.At("sima", "run", "id").S(), nextNode = after.At("sima", "run", "nodo").S() });
+        receipts.Enqueue(new { round = runs + 1, depth = (int)run.At("profundidad").N(), recovered = outcome.At("recovered").B(), time = DateTimeOffset.Now, pick.Method, pick.Args, pick.Label, prediction = pick.Forecast, priority = pick.Priority, reason = pick.Reason, cardId = pick.Card.At("id").S(), cardName = pick.Card == null ? "" : GameText.Name("relic", pick.Card.At("id").S(), J.Name(pick.Card)), cardDescription = GameText.Description("relic", pick.Card.At("id").S(), pick.Card.At("descZh").S(pick.Card.At("desc").S())), options = candidates.Where(c => c.Card != null).Select(c => new { id = c.Card.At("id").S(), c.Priority, c.Reason }).ToArray(), inheritance = pick.Method == "sima.guarda" ? new { fromDepth = run.At("profundidad").N(), toDepth = after.At("sima", "run", "profundidad").N(), before = Cards.Inherited(run!).Select(c => c.At("id").S()).ToArray(), after = after.At("sima", "run", "reliquias").A().Select(c => c.At("id").S()).ToArray() } : null, confirmed = true, equipmentLoot = DropJournal.ForCommand(after, outcome), obolsSpent = pick.Method == "sima.trade" ? Math.Max(0, beforeLoot.At("obolos").N() - after.At("sima", "run", "botin", "obolos").N()) : 0, loot = new { cores = Math.Max(0, after.At("sima", "run", "botin", "nucleos").N() - beforeLoot.At("nucleos").N()), shards = Math.Max(0, after.At("sima", "run", "botin", "esquirlas").N() - beforeLoot.At("esquirlas").N()) }, run = beforeRun, node = run.At("nodo").S(), nextRun = after.At("sima", "run", "id").S(), nextNode = after.At("sima", "run", "nodo").S() });
         PersistSession();
         if (pick.Method == "sima.tear" && run != null)
         {
@@ -397,7 +397,8 @@ sealed class Pilot
         if (fallback) cards = offered;
         if (Config.StrategyId != 3 && !fallback && cards.Any(c => !CardRules.AvoidIceAfterCore(c, run, Config)))
             cards = cards.Where(c => !CardRules.AvoidIceAfterCore(c, run, Config)).ToArray();
-        var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择本章徽章（不继承）：" : "选择可继承遗物：";
+        var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择本章徽章（不继承）："
+            : Config.StrategyId == 3 && method == "sima.trade" ? "购买赐福（不计遗物）：" : "选择可继承遗物：";
         var choices = cards.Select(card =>
         {
             var score = Cards.BuildValue(card, Config, run, method, fallback);
@@ -550,7 +551,7 @@ sealed class Pilot
             text.AppendLine($"- P{r.At("depth").N()}：{r.At("reason").S()}；胜率估计 {(r.At("prediction") == null ? "未知" : r.At("prediction", "win").N().ToString("P1"))}。");
         }
         text.AppendLine("## 确认过的操作\n\n| 时间 | 操作 | 结果 |\n|---|---|---|");
-        foreach (var r in receipts) { var n = JsonSerializer.SerializeToNode(r, J.Options); text.AppendLine($"| {DateTimeOffset.Parse(n.At("time").S()):HH:mm:ss} | {n.At("label").S().Replace("|", "/")} | {(n.At("recovered").B() ? "超时后游戏状态核验完成" : "服务端成功回执")} |"); }
+        foreach (var r in receipts) { var n = JsonSerializer.SerializeToNode(r, J.Options); text.AppendLine($"| {DateTimeOffset.Parse(n.At("time").S()):HH:mm:ss} | {GameText.Text(n.At("label").S()).Replace("|", "/")} | {(n.At("recovered").B() ? "超时后游戏状态核验完成" : "服务端成功回执")} |"); }
         text.AppendLine("\n详细数据位于同目录上级的 last-session.json、battles/ 与 pilot-日期.jsonl。\n");
         File.WriteAllText(reportPath, text.ToString(), new System.Text.UTF8Encoding(false));
     }

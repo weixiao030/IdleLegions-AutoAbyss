@@ -92,3 +92,26 @@ test('legacy summaries remain explicitly unsplit alongside new skill data', () =
  assert.equal(hero.details[0].kind,'unrecorded');assert.equal(hero.details[0].damage,70);assert.equal(hero.details[0].events,null);
  assert.equal(hero.details.reduce((sum,x)=>sum+x.damage,0),100);
 });
+
+
+test('rich damage aggregation preserves totals, target splits and globally highest hits', () => {
+ const make=(damage,crit,max,target)=>({name:'弓箭手',damage,detailVersion:2,damageDetails:[{kind:'skill',id:'marca_cazadora',name:'marca_cazadora',damage,events:2,criticalEvents:1,criticalDamage:crit,minHit:1,maxHit:max,firstHit:0,lastHit:2,periodicEvents:0,periodicDamage:0,kills:1,targets:[{id:target,name:target,damage,events:2,criticalEvents:1,kills:1}],elements:[{id:'ice',name:'冰',damage,events:2}],tags:[]}],skillActivity:[{id:'marca_cazadora',castMarkers:1,damage,events:2,healing:0,reactionDamage:0,relicDamage:0}],largestHits:[{damage:max,time:2,kind:'skill',id:'marca_cazadora',name:'marca_cazadora'}]});
+ const battles=[{round:1,depth:7,durationSec:10,heroes:[make(100,60,70,'A')]},{round:1,depth:8,durationSec:20,heroes:[make(200,100,150,'B')]}];
+ const before=JSON.stringify(battles),h=aggregateHeroes(battles)[0],d=h.details[0];
+ assert.equal(d.name,'女猎手印记');assert.equal(d.criticalDamage,160);assert.equal(d.criticalEvents,2);assert.equal(d.maxHit,150);
+ assert.equal(d.targets.reduce((n,t)=>n+t.damage,0),300);assert.equal(d.elements[0].damage,300);
+ assert.equal(h.skillActivity[0].castMarkers,2);assert.equal(h.largestHits[0].depth,8);assert.equal(JSON.stringify(battles),before);
+});
+test('missing old detail metrics remain unknown when combined with new records', () => {
+ const h=aggregateHeroes([{heroes:[{name:'法师',damage:10,damageDetails:[{kind:'skill',id:'a',damage:10,events:1}]}]},{heroes:[{name:'法师',damage:20,damageDetails:[{kind:'skill',id:'a',damage:20,events:1,criticalDamage:20,maxHit:20,targets:[{id:'a',damage:20}]}]}]}])[0];
+ assert.equal(h.details[0].damage,30);assert.equal(h.details[0].criticalDamage,null);assert.equal(h.details[0].maxHit,null);assert.equal(h.details[0].targets,null);
+});
+
+test('different observed loadouts and descriptions survive aggregation without backfill', () => {
+ const make=(text,atk)=>({name:'狂战士',defId:'berserker',damage:10,loadout:{stats:{atk},skills:[{id:'strike',description:text}]},damageDetails:[{kind:'skill',id:'strike',damage:10,events:1,description:text,descriptionBasis:'battle-context'}]});
+ const battles=[{round:1,depth:1,heroes:[make('310%',100)]},{round:1,depth:2,heroes:[make('320%',110)]},{round:1,depth:3,heroes:[make('310%',100)]},{heroes:[{name:'狂战士',damage:5}]}];
+ const before=JSON.stringify(battles),h=aggregateHeroes(battles)[0];
+ assert.equal(h.loadouts.length,2);assert.equal(h.loadouts[0].battles.length,2);assert.equal(h.loadoutMissing,1);
+ assert.deepEqual(h.details.find(x=>x.id==='strike').descriptions.map(x=>[x.text,x.count]),[['310%',2],['320%',1]]);
+ assert.equal(JSON.stringify(battles),before);
+});

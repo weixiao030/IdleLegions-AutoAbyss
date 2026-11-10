@@ -9,7 +9,7 @@ namespace FrostAbyss;
 
 sealed class Bridge
 {
-    public const string BundledVersion = "0.3.5";
+    public const string BundledVersion = "0.3.6";
     internal TimeSpan[] RecoveryDelays { get; init; } = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(15)];
     internal TimeSpan RecoveryTimeout { get; init; } = TimeSpan.FromSeconds(60);
     public static bool NeedsUpdate(JsonNode? snapshot) => snapshot != null && (!Version.TryParse(snapshot.At("version").S(), out var version) || version < Version.Parse(BundledVersion));

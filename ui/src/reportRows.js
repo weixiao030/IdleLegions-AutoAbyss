@@ -1,3 +1,4 @@
+import {gameName, gameText} from './gameText.js';
 export const REPORT_PAGE_SIZE = 10;
 
 // Latest observation per round/depth; never replace unknown latest values with older ones.
@@ -10,7 +11,12 @@ export function latestResourceRows(battles) {
 export function aggregateHeroes(battles) {
   const rows = new Map();
   for (const battle of battles) for (const hero of battle.heroes || []) {
-    const row = rows.get(hero.name) || {name:hero.name,damage:0,taken:0,crit:0,skills:0,reactions:0,hp:0,hpKnown:0,count:0,duration:0,sources:{reaction:0,relic:0,skill:0,other:0},sourcesKnown:0,details:new Map()};
+    const row = rows.get(hero.name) || {name:gameText(hero.name),defId:hero.defId,damage:0,taken:0,crit:0,skills:0,reactions:0,hp:0,hpKnown:0,count:0,duration:0,sources:{reaction:0,relic:0,skill:0,other:0},sourcesKnown:0,details:new Map(),skillActivity:new Map(),largestHits:[],loadouts:new Map(),loadoutMissing:0};
+    if (hero.loadout) {
+      const key=JSON.stringify(hero.loadout),existing=row.loadouts.get(key);
+      if(existing) existing.battles.push({round:battle.round,depth:battle.depth,node:battle.node});
+      else row.loadouts.set(key,{...hero.loadout,battles:[{round:battle.round,depth:battle.depth,node:battle.node}]});
+    } else row.loadoutMissing++;
     row.damage += hero.damage || 0; row.taken += hero.damageTaken || 0;
     row.crit += hero.criticalEvents || 0; row.skills += hero.skillEvents || 0;
     row.reactions += hero.reactionEvents || 0; row.duration += battle.durationSec || 0; row.count++;
@@ -23,16 +29,43 @@ export function aggregateHeroes(battles) {
       hero.damage > 0 ? [{kind:'unrecorded',id:'legacy',name:'旧记录未细分',damage:hero.damage,events:null}] : [];
     for (const detail of details) {
       const key = `${detail.kind}:${detail.id}`;
-      const entry = row.details.get(key) || {...detail,damage:0,events:0};
+      const existed = row.details.get(key);
+      const entry = existed || {...detail,name:gameName(detail.kind,detail.id,detail.name),damage:0,events:0,descriptions:[]};
+      if (existed) {
+        for (const field of ['criticalEvents','criticalDamage','periodicEvents','periodicDamage','channelEvents','channelDamage','kills']) entry[field] = entry[field] == null || detail[field] == null ? null : entry[field] + detail[field];
+        for (const field of ['minHit','firstHit']) entry[field] = entry[field] == null || detail[field] == null ? null : Math.min(entry[field],detail[field]);
+        for (const field of ['maxHit','lastHit']) entry[field] = entry[field] == null || detail[field] == null ? null : Math.max(entry[field],detail[field]);
+        for (const field of ['targets','elements','tags','timings','states']) entry[field] = mergeBreakdown(entry[field],detail[field]);
+      }
+      const basis=detail.descriptionBasis||'catalog',description=detail.description||'';
+      const desc=entry.descriptions.find(x=>x.basis===basis&&x.text===description);
+      if(desc) desc.count++; else entry.descriptions.push({basis,text:description,count:1});
       entry.damage += detail.damage || 0;
       entry.events = entry.events == null || detail.events == null ? null : entry.events + detail.events;
       // Prefer an observed display name over an ID-only label from an older bridge.
-      if (detail.name && detail.name !== detail.id) entry.name = detail.name;
+      if (detail.name && detail.name !== detail.id) entry.name = gameName(detail.kind,detail.id,detail.name);
       row.details.set(key, entry);
     }
+    for (const skill of hero.skillActivity || []) {
+      const entry = row.skillActivity.get(skill.id);
+      if (entry) for (const field of ['castMarkers','damage','events','healing','reactionDamage','relicDamage']) entry[field] += skill[field] || 0;
+      else row.skillActivity.set(skill.id,{...skill,name:gameName('skill',skill.id,skill.name)});
+    }
+    for (const hit of hero.largestHits || []) row.largestHits.push({...hit,round:battle.round,depth:battle.depth,node:battle.node});
     rows.set(hero.name, row);
   }
-  return [...rows.values()].map(row => ({...row,details:[...row.details.values()].sort((a,b)=>b.damage-a.damage)})).sort((a,b)=>b.damage-a.damage);
+  return [...rows.values()].map(row => ({...row,loadouts:[...row.loadouts.values()],details:[...row.details.values()].sort((a,b)=>b.damage-a.damage),skillActivity:[...row.skillActivity.values()].sort((a,b)=>b.damage-a.damage),largestHits:row.largestHits.sort((a,b)=>b.damage-a.damage).slice(0,20)})).sort((a,b)=>b.damage-a.damage);
+}
+
+function mergeBreakdown(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return null;
+  const rows = new Map(left.map(item => [`${item.kind || ''}:${item.id}`,{...item}]));
+  for (const item of right) {
+    const key = `${item.kind || ''}:${item.id}`, entry = rows.get(key);
+    if (!entry) rows.set(key,{...item});
+    else for (const field of ['damage','events','criticalEvents','kills']) if (field in item) entry[field] = (entry[field] || 0) + item[field];
+  }
+  return [...rows.values()].sort((a,b)=>b.damage-a.damage);
 }
 
 // Paginate display rows only; summaries and exports retain the complete data.

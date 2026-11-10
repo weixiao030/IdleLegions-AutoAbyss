@@ -22,6 +22,13 @@ static class IceStrategyRules
 
     internal static string FamilyName(string family) => Names.GetValueOrDefault(family, family);
 
+    // Relics are the collection/carry target. Shop favours and badge choices
+    // compare their combat effects against all currently active cards instead.
+    internal static bool CollectsRelics(string method) => method is "sima.reliquia" or "sima.guarda";
+    internal static JsonNode[] SelectionBaseline(JsonNode? run, string method) =>
+        method == "sima.guarda" && run != null ? Cards.Inherited(run)
+        : method == "sima.reliquia" ? run.At("reliquias").A().ToArray() : Cards.Current(run);
+
     internal static string? SkipReason(JsonNode card, JsonNode? run, Settings cfg, string method)
     {
         var disabled = CardRules.DisabledStatus(card, cfg);
@@ -30,10 +37,10 @@ static class IceStrategyRules
             && !Cards.IsCore(card, cfg) && Cards.Family(card) != "escarcha")
             return "ICE 后期方案：冻结核心继承前优先普攻冻结与冰系牌";
 
-        var baseline = CardRules.Baseline(run, method);
+        var baseline = SelectionBaseline(run, method);
         var id = card.At("id").S();
-        if (id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
-            || method == "sima.guarda" && card.At("llevas").N() >= 3))
+        if (method == "sima.guarda" && id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
+            || card.At("llevas").N() >= 3))
             return "同种牌已达三层继承上限";
         return null;
     }
@@ -43,12 +50,15 @@ static class IceStrategyRules
         int penalty = CardRules.SeekingInheritedFreeze(run, cfg)
             && !Cards.IsCore(card, cfg) && Cards.Family(card) != "escarcha" ? 6000 : 0;
         if (CardRules.DisabledStatus(card, cfg) != null) penalty += 4000;
-        var baseline = CardRules.Baseline(run, method);
+        var baseline = SelectionBaseline(run, method);
         var id = card.At("id").S();
-        if (id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
-            || method == "sima.guarda" && card.At("llevas").N() >= 3)) penalty += 3500;
+        if (method == "sima.guarda" && id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
+            || card.At("llevas").N() >= 3)) penalty += 3500;
         return penalty;
     }
+
+    internal static bool HasPreference(IEnumerable<JsonNode> cards, int rank, Settings cfg) => rank > 0
+        && cards.Any(c => Preference(c, Effects.Parse([c], cfg)).Rank == rank);
 
     internal static int GuaranteedCritEvery(JsonNode card)
     {
@@ -58,8 +68,9 @@ static class IceStrategyRules
     }
 
     // Preferences describe effects, never positions in the three-card menu.
-    // Explicit user preferences follow missing freeze/bounce/critical cores
-    // and precede the general eight-per-series goal. Badges do not add counts.
+    // Missing preferences follow missing freeze/bounce/critical cores. Each
+    // effect category gets its first-copy bonus only once per baseline.
+    // Badges and shop favours never add relic family counts.
     internal static (int Rank, string Reason) Preference(JsonNode card, Effects fx)
     {
         var family = Cards.Family(card);
@@ -96,7 +107,7 @@ static class IceStrategyRules
     internal static string Description(int strategy) => strategy switch
     {
         2 => "使用 v1.3.1 原始选牌、商店判断、目标组合及模拟器；独立于策略一和 ICE 的新增偏好。",
-        3 => "普攻冻结确认继承前优先冰系；继承后依次补齐每4/5/6次全体弹跳与每8/10次必暴击。七个系列各凑8张遗物，徽章不计数；先选指定效果，再补张数较少的未满系列。暗影低血增伤优先、标记加深次选；瘴气40%状态增伤、腐肉、火反应增伤、火状态增伤、坏疽、先锋、麻痹按效果比较。指定偏好之后，满8张系列不挤占未满系列；临时徽章按效果选择。菜单左右换位不影响排序。",
+        3 => "普攻冻结确认继承前优先冰系；继承后依次补齐每4/5/6次全体弹跳与每8/10次必暴击。七个系列各凑8张遗物，徽章及商店赐福不计数；先补缺失的指定效果，每类已有一张后回到系列补齐。本系已满8张的指定效果让位给未满系列，缺失弹跳与必暴击仍必拿。暗影低血增伤优先、标记加深次选；瘴气40%状态增伤、腐肉、火反应增伤、火状态增伤、坏疽、先锋、麻痹按效果比较。同种遗物可在本层继续获取，跨层继承仍最多3张；同系同效果优先补未持有牌；商店及徽章按当前效果选择。菜单左右换位不影响排序。",
         _ => "普攻冻结确认继承前优先冰系（含减速），本章冻结及临时徽章不能替代继承；确认继承后依次补新增或更快全体弹跳、独立普攻各一份、引爆器一份、火增伤与其他输出，优先避开冰减速，防御少量补充。无合适候选时择优兜底。"
     };
 
@@ -111,11 +122,15 @@ static class IceStrategyRules
     internal static object[] Progress(JsonNode? run, Settings cfg)
     {
         var cards = run.At("reliquias").A().ToArray();
+        var inherited = run == null ? [] : CardRules.InheritedBaseline(run);
+        bool known = run == null || CardRules.ArrivalBaseline(run) != null
+            || run.At("guardaPendiente", "cartas").A().Any();
         return Families.Select(f => new
         {
             family = f,
             name = FamilyName(f),
             count = CountFamily(cards, f),
+            inheritedCount = known ? (int?)CountFamily(inherited, f) : null,
             target = cfg.StrategyId == 3 ? SeriesTarget : 0
         }).ToArray();
     }

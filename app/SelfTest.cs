@@ -249,7 +249,9 @@ static class SelfTest
             Assert(sharpen.Forecast!.Duration<meditate.Forecast!.Duration,"满血满魂时磨利强化会缩短后续战斗，而非永远选无收益冥想");
             SimulationSafetyTests.Run(Assert).GetAwaiter().GetResult();
             StrategyTests.Run(Assert);
+            IceCompletionTests.Run(Assert);
             BattleJournalTests.Run(Assert, args);
+            DamageBreakdownTests.Run(Assert, args);
             CardSelectionTests.Run(Assert);
             IceOpeningTests.Run(Assert);
             FreezeCollectionTests.Run(Assert);

@@ -178,7 +178,7 @@ static class Cards
 
     static (int Priority, string Reason) ScoreIceStrategy(JsonNode card, Settings cfg, JsonNode? run, string method, bool strategyFallback)
     {
-        var baseline = CardRules.Baseline(run, method);
+        var baseline = IceStrategyRules.SelectionBaseline(run, method);
         var effects = Effects.Parse([card], cfg);
         var skip = strategyFallback ? null : IceStrategyRules.SkipReason(card, run, cfg, method);
         if (skip != null) return (-10000, skip);
@@ -205,21 +205,28 @@ static class Cards
         if (critEvery is 8 or 10 && !heldCrit.Contains(critEvery))
             return (critEvery == 8 ? 2420 : 2410, $"ICE 后期方案：必拿每 {critEvery} 次攻击必定暴击，分别补齐 8/10 次档");
 
-        if (preference.Rank > 0)
-            return (2300 + preference.Rank * 8, "ICE 后期方案：指定效果优先；" + preference.Reason);
-
         var family = Cards.Family(card);
-        if (method != "sima.blason" && IceStrategyRules.Families.Contains(family))
+        bool collectible = IceStrategyRules.CollectsRelics(method) && IceStrategyRules.Families.Contains(family);
+        int count = IceStrategyRules.CountFamily(baseline, family);
+        bool fullWithMissingSeries = collectible && count >= IceStrategyRules.SeriesTarget
+            && IceStrategyRules.Families.Any(f => IceStrategyRules.CountFamily(baseline, f) < IceStrategyRules.SeriesTarget);
+        if (preference.Rank > 0 && !IceStrategyRules.HasPreference(baseline, preference.Rank, cfg))
+            return (fullWithMissingSeries ? 2000 + preference.Rank * 8 : 2300 + preference.Rank * 8,
+                (fullWithMissingSeries ? "ICE 后期方案：本系已满8张，缺失指定效果暂让未满系列；" : "ICE 后期方案：补首份指定效果；") + preference.Reason);
+
+        if (collectible)
         {
-            var seriesCards = method == "sima.guarda" ? baseline : run.At("reliquias").A();
-            int count = IceStrategyRules.CountFamily(seriesCards, family);
             if (count < IceStrategyRules.SeriesTarget)
-                return (2200 - count * 10,
-                    $"ICE 后期方案：{IceStrategyRules.FamilyName(family)}系列 {count}/8，指定效果之后补齐七系各八张");
+                return (2200 - count * 10 + preference.Rank / 2
+                    + (baseline.Any(c => c.At("id").S() == card.At("id").S()) ? 0 : 1),
+                    $"ICE 后期方案：{IceStrategyRules.FamilyName(family)}系列{(method == "sima.guarda" ? "已继承" : "本层")} {count}/8，已满足的指定效果不再抢占补系名额");
         }
 
+        if (preference.Rank > 0)
+            return (1400 + preference.Rank * 8, "ICE 后期方案：此类指定效果已持有，按当前有效增益补充；" + preference.Reason);
+
         if (family == "brasa" && (IceStrategyRules.HasElementBonus(card) || IceStrategyRules.HasDamage(effects)))
-            return (1350, "ICE 后期方案：系列目标达成后补火系增伤");
+            return (1350, "ICE 后期方案：按效果补火系增伤，优先级低于缺失关键效果与未满遗物系列");
         if (family == "escarcha" && (effects.VsSlow > 0 || effects.Slow > 0))
             return (1320, "ICE 后期方案：补冰系减速与对减速目标增伤");
         if (IceStrategyRules.HasDamage(effects))

@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.5"
+const VERSION: String = "0.3.6"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -182,6 +182,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 	p.set("_data", sima.duplicate(true))
 	var state_before: Dictionary = _state()
 	var battle_labels: Dictionary = _battle_labels(run, state_before)
+	var battle_context: Dictionary = _battle_context(run, state_before)
 	var inventory_observed: bool = state_before.get("inventory") is Array
 	var inventory_ids: Dictionary = {}
 	for item_v in state_before.get("inventory", []):
@@ -219,6 +220,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 	if receipt.get("data") is Dictionary and receipt["data"].get("result") is Dictionary:
 		last_battle = {"commandId": str(cmd.get("id", "")), "time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run, "labels": battle_labels}
 		last_battle["lootEvidence"] = last_loot.duplicate(true)
+		last_battle["context"] = battle_context
 		_save("battle.json", last_battle)
 	var confirmed: bool = not receipt.is_empty()
 	var success: bool = confirmed and bool(receipt.get("ok", false))
@@ -268,6 +270,35 @@ func _battle_labels(run: Dictionary, state_before: Dictionary) -> Dictionary:
 			if rid != "" and name_text != "":
 				labels["reactions"][rid] = tr(name_text)
 	return labels
+
+func _battle_context(run: Dictionary, state_before: Dictionary) -> Dictionary:
+	# Capture only the participating heroes, before dispatch. No current-state
+	# backfill after combat: skill levels and equipment may change between runs.
+	var heroes: Array = []
+	for entry in run.get("heroes", []):
+		if not entry is Dictionary:
+			continue
+		var hero: Dictionary = entry
+		for candidate in state_before.get("heroes", []):
+			if candidate is Dictionary and str(candidate.get("id", "")) == str(hero.get("id", "")):
+				var record: Dictionary = {}
+				for key in ["id", "defId", "level", "stats", "skills", "skillSlots", "tacticas", "prioLanz"]:
+					if candidate.has(key):
+						record[key] = _clean(candidate[key])
+				# Keep the observed skill parameters; omit UI condition catalogs.
+				var skills: Array = []
+				for skill in candidate.get("skills", []):
+					if not skill is Dictionary:
+						continue
+					var item: Dictionary = {}
+					for key in ["id", "name", "desc", "level", "cooldown", "cooldownBase", "equipped", "known", "unlocked", "element", "target", "rule"]:
+						if skill.has(key):
+							item[key] = _clean(skill[key])
+					skills.append(item)
+				record["skills"] = skills
+				heroes.append(record)
+				break
+	return {"version": 1, "source": "pre-command-account-state", "capturedAt": Time.get_unix_time_from_system(), "heroes": heroes}
 
 func _item_for_log(item: Dictionary) -> Dictionary:
 	var out: Dictionary = {}

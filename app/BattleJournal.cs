@@ -22,7 +22,7 @@ static class BattleJournal
         if (runId != "" && afterRunId != "" && runId != afterRunId) resourceAfter = null;
         var resourceDelta = ResourceDelta(resourceBefore, resourceAfter);
         var cards = before.At("reliquias").A().Concat(before.At("blasones").A()).Concat(before.At("buffs").A())
-            .Select(c => new { id = c.At("id").S(), name = J.Name(c), description = c.At("descZh").S(c.At("desc").S()) })
+            .Select(c => new { id = c.At("id").S(), name = GameText.Name("relic", c.At("id").S(), J.Name(c)), description = GameText.Description("relic", c.At("id").S(), c.At("descZh").S(c.At("desc").S())) })
             .ToArray();
         Directory.CreateDirectory(directory);
         var fileName = $"run-{round:D3}-P{depth}-{number:D5}.json";
@@ -51,10 +51,39 @@ static class BattleJournal
             ["durationSec"] = result.At("durationSec").N(),
             ["sourceFile"] = sourceFile,
             ["resourceDelta"] = JsonSerializer.SerializeToNode(resourceDelta, J.Options),
-            ["heroes"] = JsonSerializer.SerializeToNode(HeroStats(result, heroes, events, battle.At("labels"), cards), J.Options),
+            ["heroes"] = JsonSerializer.SerializeToNode(HeroStats(result, heroes, events, battle.At("labels"), cards, battle.At("context")), J.Options),
             ["cardProcs"] = JsonSerializer.SerializeToNode(CardProcs(cards, events), J.Options),
             ["loot"] = DropJournal.Read(battle.At("lootEvidence"))
         };
+    }
+
+    // Recompute display-only details from archived game events. No game commands,
+    // resource changes, or edits to the authoritative receipt are involved.
+    internal static JsonObject Upgrade(JsonObject record)
+    {
+        var copy = (JsonObject)record.DeepClone();
+        if (record.At("heroes").A().All(h => h.At("detailVersion").N() >= 3)) return copy;
+        try
+        {
+            var root = Path.GetFullPath(Path.Combine(Paths.Data, "battles")) + Path.DirectorySeparatorChar;
+            var source = Path.GetFullPath(Path.Combine(Paths.Data, record.At("sourceFile").S()));
+            if (!source.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return copy;
+            var archived = J.Read(source);
+            var battle = archived.At("authoritativeBattle");
+            if (battle.At("result", "events") is not JsonArray || battle.At("before", "heroes") is not JsonArray
+                || archived.At("round").N() != record.At("round").N()
+                || archived.At("depth").N() != record.At("depth").N()
+                || archived.At("runId").S() != record.At("runId").S()
+                || archived.At("node").S() != record.At("node").S()) return copy;
+            var before = battle.At("before");
+            var events = battle.At("result", "events").A().ToArray();
+            var cards = before.At("reliquias").A().Concat(before.At("blasones").A()).Concat(before.At("buffs").A())
+                .Select(c => (object)new { id = c.At("id").S(), name = GameText.Name("relic",c.At("id").S(),J.Name(c)), description = GameText.Description("relic",c.At("id").S(),c.At("descZh").S(c.At("desc").S())) }).ToArray();
+            copy["heroes"] = JsonSerializer.SerializeToNode(HeroStats(battle.At("result"), before.At("heroes").A().ToArray(), events, battle.At("labels"), cards, battle.At("context")), J.Options);
+            copy["cardProcs"] = JsonSerializer.SerializeToNode(CardProcs(cards,events),J.Options);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
+        return copy;
     }
 
     internal static object[] Summarize(IEnumerable<JsonObject> records) => records
@@ -119,13 +148,13 @@ static class BattleJournal
         foreach (var card in group)
         {
             count++;
-            text.AppendLine($"| {group.Key.Item1} | P{group.Key.Item2} | {card.At("cardName").S(card.At("cardId").S())} (`{card.At("cardId").S()}`) | {card.At("cardDescription").S().Replace("|", "/")} |");
+            text.AppendLine($"| {group.Key.Item1} | P{group.Key.Item2} | {GameText.Name("relic",card.At("cardId").S(),card.At("cardName").S())} (`{card.At("cardId").S()}`) | {GameText.Description("relic",card.At("cardId").S(),card.At("cardDescription").S()).Replace("|", "/")} |");
         }
         if (count == 0) return "## 已确认取得的卡牌\n\n本段尚无已确认的卡牌选择回执。\n";
         return text.ToString();
     }
 
-    const string HeroHeader = "| 角色 | 输出 | 输出占比 | DPS | 承受事件伤害 | 结算生命损失（已知/场数） | 暴击命中 | 技能命中 | 反应命中 | 反应/遗物/技能/其他输出 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|";
+    const string HeroHeader = "| 角色 | 输出 | 输出占比 | 每秒输出 | 承受事件伤害 | 结算生命损失（已知/场数） | 暴击命中 | 技能命中 | 反应命中 | 反应/遗物/技能/其他输出 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|";
 
     static void WriteHeroRows(System.Text.StringBuilder text, JsonNode[] battles)
     {
@@ -202,7 +231,7 @@ static class BattleJournal
 
     static void WriteDamageDetails(System.Text.StringBuilder text, JsonNode[] battles)
     {
-        text.AppendLine("### 具体技能与伤害明细\n\n按反应 → 遗物 → 技能 → 普通/未标记互斥归类。命中事件数不是施放次数；没有名称映射时保留原始 ID，旧记录不反推技能。占比以该角色全部输出为分母。\n");
+        text.AppendLine("### 具体技能与伤害明细\n\n按反应 → 遗物 → 技能 → 无来源标记互斥归类。命中事件数不是施放次数；没有名称映射时保留原始 ID，旧记录不反推技能。占比以该角色全部输出为分母。\n");
         foreach (var heroes in battles.SelectMany(b => b.At("heroes").A()).GroupBy(h => h.At("name").S()))
         {
             text.AppendLine($"#### {heroes.Key.Replace("|", "/")}\n\n| 来源 | 技能 / 效果 | 输出 | 占角色输出 | 命中事件 |\n|---|---|---:|---:|---:|");
@@ -214,17 +243,18 @@ static class BattleJournal
             {
                 double damage = group.Sum(d => d.At("damage").N());
                 var named = group.LastOrDefault(d => d.At("name").S() != "" && d.At("name").S() != group.Key.Id) ?? group.Last();
-                text.AppendLine($"| {DetailKind(group.Key.Kind)} | {named.At("name").S(group.Key.Id).Replace("|", "/")} (`{group.Key.Id.Replace("|", "/")}`) | {damage:N0} | {(total > 0 ? damage / total : 0):P1} | {group.Sum(d => d.At("events").N()):N0} |");
+                text.AppendLine($"| {DetailKind(group.Key.Kind)} | {GameText.Name(group.Key.Kind, group.Key.Id, named.At("name").S(group.Key.Id)).Replace("|", "/")} (`{group.Key.Id.Replace("|", "/")}`) | {damage:N0} | {(total > 0 ? damage / total : 0):P1} | {group.Sum(d => d.At("events").N()):N0} |");
             }
             double legacy = heroes.Where(h => h.At("damageDetails") == null).Sum(h => h.At("damage").N());
             if (legacy > 0) text.AppendLine($"| 未细分 | 旧记录未细分 | {legacy:N0} | {(total > 0 ? legacy / total : 0):P1} | 未确认 |");
             text.AppendLine();
+            DamageReport.Write(text, heroes);
         }
     }
 
-    static string DetailKind(string kind) => kind switch { "reaction" => "反应", "relic" => "遗物", "skill" => "技能", _ => "普通 / 未标记" };
+    static string DetailKind(string kind) => kind switch { "reaction" => "反应", "relic" => "遗物", "skill" => "技能", _ => "无来源标记" };
 
-    static object[] HeroStats(JsonNode? result, JsonNode[] roster, JsonNode[] events, JsonNode? labels, object[] cards)
+    static object[] HeroStats(JsonNode? result, JsonNode[] roster, JsonNode[] events, JsonNode? labels, object[] cards, JsonNode? context)
     {
         var damageById = result.At("sima", "dano");
         var cardMap = cards.Select(c => JsonSerializer.SerializeToNode(c, J.Options)!).ToArray();
@@ -237,19 +267,21 @@ static class BattleJournal
             var aliases = new HashSet<string>(new[] { id, name, role }.Where(x => x != ""), StringComparer.OrdinalIgnoreCase);
             var sourced = events.Where(e => aliases.Contains(e.At("src").S())).ToArray();
             var damageEvents = sourced.Where(e => e.At("side").S() == "ally" && e.At("dmg").N() > 0).ToArray();
-            string Source(JsonNode e) => e.At("reaction").S() != "" ? "reaction" : e.At("rel").S() != "" ? "relic" : e.At("skill").S() != "" ? "skill" : "other";
-            string DetailId(JsonNode e) => Source(e) switch { "reaction" => e.At("reaction").S(), "relic" => e.At("rel").S(), "skill" => e.At("skill").S(), _ => "unmarked" };
-            string DetailName(string kind, string key) => kind switch
+            string Source(JsonNode e) => DamageBreakdown.Kind(e);
+
+            string DetailName(string kind, string key) => GameText.Name(kind, key, kind switch
             {
                 "skill" => labels.At("skills", id, key).S(hero.At("skills").A().FirstOrDefault(s => s.At("id").S() == key).At("name").S(key)),
                 "reaction" => labels.At("reactions", key).S(key),
                 "relic" => cardMap.FirstOrDefault(c => c.At("id").S() == key).At("name").S(key),
-                _ => "普通 / 未标记伤害"
-            };
-            var damageDetails = damageEvents.GroupBy(e => (Kind: Source(e), Id: DetailId(e)))
-                .Select(g => new { kind = g.Key.Kind, id = g.Key.Id, name = DetailName(g.Key.Kind, g.Key.Id),
-                    damage = g.Sum(e => e.At("dmg").N()), events = g.Count(), criticalEvents = g.Count(e => e.At("crit").B()) })
-                .OrderByDescending(d => d.damage).ToArray();
+                _ => key == "channel-unmarked" ? "引导命中（来源未标记）" : key == "periodic-unmarked" ? "周期命中（来源未标记）" : "无来源标记的命中"
+            });
+            var observed = BattleContext.Hero(context, id);
+            string Describe(string kind, string key) => kind == "skill"
+                ? observed.At("skills").A().FirstOrDefault(s => s.At("id").S() == key).At("desc") is JsonNode desc
+                    ? GameText.Description(kind,key,desc.S(),hero.At("defId").S()) : ""
+                : GameText.Description(kind,key);
+            var damageDetails = DamageBreakdown.Details(damageEvents, DetailName, Describe, observed == null ? "not-recorded" : "battle-context");
             var incoming = events.Where(e => e.At("side").S() == "enemy" && aliases.Contains(e.At("dst").S()) && e.At("dmg").N() > 0).ToArray();
             double? hpLoss = damageById is JsonObject map && map.TryGetPropertyValue(id, out var total) ? total.N() : null;
             double outgoing = sourced.Where(e => e.At("side").S() == "ally").Sum(e => Math.Max(0, e.At("dmg").N()));
@@ -257,12 +289,17 @@ static class BattleJournal
             {
                 id,
                 name = role == "" ? name : role,
+                defId = hero.At("defId").S(),
                 damage = outgoing,
                 hpLoss,
                 dps = result.At("durationSec").N() > 0 ? outgoing / result.At("durationSec").N() : 0,
                 durationSec = result.At("durationSec").N(),
                 damageSources = new[] { "reaction", "relic", "skill", "other" }.ToDictionary(k => k, k => damageEvents.Where(e => Source(e) == k).Sum(e => e.At("dmg").N())),
                 damageDetails,
+                detailVersion = 3,
+                loadout = BattleContext.Build(context, id),
+                skillActivity = DamageBreakdown.Skills(sourced, DetailName, Describe),
+                largestHits = DamageBreakdown.LargestHits(damageEvents, DetailName),
                 damageSource = "ally-battle-events",
                 damageTaken = incoming.Sum(e => e.At("dmg").N()),
                 criticalEvents = sourced.Count(e => e.At("side").S() == "ally" && e.At("crit").B()),
@@ -289,6 +326,7 @@ static class BattleJournal
                     description = card.At("description").S("效果描述未包含在本次回执中"),
                     damage = g.Sum(e => Math.Max(0, e.At("dmg").N())),
                     events = g.Count(),
+                    triggerUnits = g.Sum(e => Math.Max(1, e.At("relN").N(1))),
                     battleDamage = allCardDamage
                 };
             }).ToArray();
