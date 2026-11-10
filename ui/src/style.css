@@ -110,3 +110,21 @@
 .report-summary-table th[scope=row]{text-align:left;font-weight:600}
 .report-section .report-summary-table tbody tr.report-top-output{background:var(--tint)}
 .report-section .report-summary-table th,.report-section .report-summary-table td{padding-top:12px;padding-bottom:12px}
+
+/* Battle totals stay visible; detailed tables open only on request. */
+.hero-detail-toggle{display:inline-flex;align-items:center;gap:8px;border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:3px 0;text-align:left;white-space:nowrap}
+.hero-detail-toggle svg{transform:rotate(-90deg);flex:none;transition:transform .15s}
+.hero-detail-toggle[aria-expanded=true] svg{transform:none}
+.hero-detail-toggle:focus-visible,.report-disclosure>summary:focus-visible{outline:2px solid var(--accent-9);outline-offset:4px;border-radius:3px}
+.report-summary-table .hero-detail-row[hidden]{display:none}
+.report-section .report-summary-table .hero-detail-row>td{padding:0;text-align:left;white-space:normal}
+.hero-summary-scroll{container-type:inline-size}
+.hero-damage-details{width:100cqw;box-sizing:border-box;padding:20px 22px;background:var(--surface);border-left:3px solid var(--accent-9)}
+.hero-damage-details h3{font-size:13px;margin:0}.hero-damage-details .section-bar{gap:18px;flex-wrap:wrap}
+.hero-damage-details .report-share{display:flex;width:100%;gap:16px;justify-content:flex-end}
+.hero-damage-details .report-share-track{width:clamp(100px,20vw,320px)}
+.report-disclosure>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:18px;font-size:13px}
+.report-disclosure>summary::-webkit-details-marker{display:none}.report-disclosure>summary>svg{margin-left:auto;flex:none;transition:transform .15s;transform:rotate(-90deg)}
+.report-disclosure[open]>summary>svg{transform:none}.report-disclosure-content{padding-top:22px}.report-disclosure-content>.report-section{padding:20px 0;border:0;border-radius:0;border-top:1px solid var(--line);margin-bottom:0;background:none}
+@media(max-width:640px){.report-disclosure>summary{flex-wrap:wrap;gap:10px}.report-disclosure>summary .muted{order:3;flex-basis:100%;font-size:11px}.hero-damage-details{padding:16px}.hero-damage-details .report-share-track{width:120px}}
+@media(prefers-reduced-motion:reduce){.hero-detail-toggle svg,.report-disclosure>summary>svg{transition:none}}

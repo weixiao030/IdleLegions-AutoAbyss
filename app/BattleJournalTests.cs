@@ -77,6 +77,34 @@ static class BattleJournalTests
         check(hero.At("damageSources", "reaction").N() == 50 && hero.At("damageSources", "other").N() == 100
             && hero.At("damageSources")!.AsObject().Sum(x => x.Value.N()) == 150,
             "重叠技能反应遗物标记互斥归类，来源相加等于输出");
+        var detailedBattle = battle.DeepClone();
+        detailedBattle["labels"] = JsonNode.Parse("""{"skills":{"hero-1":{"strike":"裂地斩"}},"reactions":{"shatter":"碎冰"}}""");
+        detailedBattle["result"]!["events"]!.AsArray().Add(JsonNode.Parse("""{"side":"ally","src":"hero-1","dst":"Enemy","dmg":25,"skill":"strike"}"""));
+        detailedBattle["result"]!["events"]!.AsArray().Add(JsonNode.Parse("""{"side":"ally","src":"Berserker","dst":"Enemy","dmg":15,"rel":"es_invierno"}"""));
+        detailedBattle["result"]!["events"]!.AsArray().Add(JsonNode.Parse("""{"side":"ally","src":"Berserker","dst":"Enemy","dmg":10,"skill":"unknown-skill"}"""));
+        var detailed = BattleJournal.Capture(detailedBattle, before, after, 1, 3, directory, 5);
+        var detailHero = detailed.At("heroes").A().Single();
+        var details = detailHero.At("damageDetails").A().ToArray();
+        check(details.Length == 5 && details.Sum(d => d.At("damage").N()) == detailHero.At("damage").N()
+            && detailHero.At("damage").N() == 200, "具体技能明细互斥且总和等于角色输出，排除敌方与治疗事件");
+        check(details.Single(d => d.At("kind").S() == "reaction").At("name").S() == "碎冰"
+            && details.Single(d => d.At("id").S() == "strike").At("name").S() == "裂地斩"
+            && details.Single(d => d.At("kind").S() == "relic").At("name").S() == "Invierno", "具体技能反应使用当场游戏名称映射，遗物使用回执名称");
+        check(details.Single(d => d.At("id").S() == "strike").At("damage").N() == 25
+            && details.Single(d => d.At("id").S() == "shatter").At("damage").N() == 50,
+            "多重标记事件只归反应，不重复写入具体技能或遗物明细");
+        check(details.Single(d => d.At("id").S() == "unknown-skill").At("name").S() == "unknown-skill"
+            && details.Single(d => d.At("kind").S() == "other").At("name").S().Contains("未标记"), "未知技能保留ID，无标记事件不伪造普通攻击归因");
+        check(details.Sum(d => d.At("events").N()) == 5, "技能明细命中数排除零伤害触发与负伤害");
+        var detailReport = BattleJournal.Report([detailed, detailed]);
+        check(detailReport.Contains("具体技能与伤害明细") && detailReport.Contains("裂地斩 (`strike`)")
+            && detailReport.Contains("命中事件") && detailReport.Contains("碎冰"), "完整报告包含按角色汇总的具体技能伤害及未知ID");
+        var noLabels = detailedBattle.DeepClone(); noLabels.AsObject().Remove("labels");
+        noLabels["before"]!["heroes"]![0]!["skills"] = JsonNode.Parse("""[{"id":"strike","name":"回执自带斩击"}]""");
+        var fallback = BattleJournal.Capture(noLabels, before, after, 1, 3, directory, 6);
+        check(fallback.At("heroes").A().Single().At("damageDetails").A().Single(d => d.At("id").S() == "strike").At("name").S() == "回执自带斩击", "旧桥接有英雄技能名称时仍可直接识别");
+        var legacySummary = first.DeepClone(); legacySummary["heroes"]![0]!.AsObject().Remove("damageDetails");
+        check(BattleJournal.Report([legacySummary.AsObject()]).Contains("旧记录未细分"), "旧汇总缺少明细时保留未细分输出，导出不捏造技能");
         check(report.Contains("输出占比") && report.Contains("DPS") && report.Contains("结算生命损失")
             && report.Contains("占全队输出"), "Markdown保留角色占比、DPS、结算实损和卡牌直接触发占比");
         var moved = after.DeepClone();

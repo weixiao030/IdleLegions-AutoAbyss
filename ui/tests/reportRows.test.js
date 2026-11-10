@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {equipmentRows, reportPage, REPORT_PAGE_SIZE} from '../src/reportRows.js';
+import {aggregateHeroes, latestResourceRows, equipmentRows, reportPage, REPORT_PAGE_SIZE} from '../src/reportRows.js';
 
 test('display rows paginate as 10 / 10 / 8 without modifying source', () => {
   const rows = Array.from({length: 28}, (_, i) => i);
@@ -60,4 +60,35 @@ test('non-mythic rows stay hidden but preserve mythic mailbox counts', () => {
  assert.equal(equipmentRows(records).length,1);
  assert.equal(equipmentRows(records)[0].pending,true);
  assert.deepEqual(equipmentRows([drop({items:[{id:'epic',rarity:'epic'}],mailedMythics:0})]),[]);
+});
+
+
+test('resources keep only the last observation at each depth, descending numerically', () => {
+ const rows=[{round:1,depth:7,id:'old'}, {round:1,depth:6,id:'p6'}, {round:1,depth:7,id:'last'}, {round:1,depth:10,id:'p10'}, {round:1,depth:8,id:'p8'}];
+ const before=JSON.stringify(rows);
+ assert.deepEqual(latestResourceRows(rows).map(x=>x.id), ['p10','p8','last','p6']);
+ assert.equal(JSON.stringify(rows), before);
+});
+test('resources retain different rounds and unknown latest values without summing or backfill', () => {
+ const rows=[{round:1,depth:8,resourceDelta:{cores:100}}, {round:2,depth:7,id:'r2'}, {round:1,depth:8,resourceDelta:{cores:null}}, {round:1,depth:7,id:'r1'}];
+ const result=latestResourceRows(rows);
+ assert.equal(result.length,3); assert.equal(result[0].id,'r2');
+ assert.equal(result[1].resourceDelta.cores,null);
+ assert.deepEqual(latestResourceRows([]),[]);
+ assert.deepEqual(latestResourceRows(rows.filter(x=>x.round===1)).map(x=>x.depth),[8,7]);
+});
+test('skill aggregation combines by kind and ID, retains names and conserves total damage', () => {
+ const battles=[{durationSec:10,heroes:[{name:'弓箭手',damage:100,damageDetails:[{kind:'skill',id:'a',name:'连射',damage:70,events:2},{kind:'reaction',id:'a',name:'碎冰',damage:30,events:1}]}]},
+ {durationSec:20,heroes:[{name:'弓箭手',damage:50,damageDetails:[{kind:'skill',id:'a',name:'a',damage:50,events:3}]}]}];
+ const before=JSON.stringify(battles),hero=aggregateHeroes(battles)[0];
+ assert.equal(hero.damage,150);assert.equal(hero.duration,30);
+ assert.equal(hero.details.length,2);assert.equal(hero.details[0].name,'连射');assert.equal(hero.details[0].events,5);
+ assert.equal(hero.details.reduce((sum,x)=>sum+x.damage,0),hero.damage);
+ assert.equal(JSON.stringify(battles),before);
+});
+test('legacy summaries remain explicitly unsplit alongside new skill data', () => {
+ const battles=[{heroes:[{name:'法师',damage:50}]}, {heroes:[{name:'法师',damage:30,damageDetails:[{kind:'skill',id:'ice',name:'冰球',damage:30,events:2}]}]}, {heroes:[{name:'法师',damage:20}]}];
+ const hero=aggregateHeroes(battles)[0];
+ assert.equal(hero.details[0].kind,'unrecorded');assert.equal(hero.details[0].damage,70);assert.equal(hero.details[0].events,null);
+ assert.equal(hero.details.reduce((sum,x)=>sum+x.damage,0),100);
 });

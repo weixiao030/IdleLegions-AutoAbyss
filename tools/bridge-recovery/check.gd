@@ -59,12 +59,27 @@ func _ready() -> void:
 	await get_tree().process_frame
 	bridge.game = game
 	bridge.net = net
+	var translation: Translation = Translation.new()
+	translation.locale = "zh_CN"
+	translation.add_message("Fixture Strike", "夹具斩击")
+	translation.add_message("Fixture Reaction", "夹具反应")
+	TranslationServer.add_translation(translation)
+	TranslationServer.set_locale("zh_CN")
+	game.content = {"heroCatalog": [{"defId": "fixture-class", "skills": [{"id": "strike", "name": "Catalog Strike"}, {"id": "catalog-only", "name": "Catalog Only"}]}, {"defId": "another-class", "skills": [{"id": "unrelated", "name": "Unrelated Skill"}]}], "reactions": [{"id": "shatter", "name": "Fixture Reaction"}]}
+	game.state.heroes = [{"id": "fixture-hero", "skills": [{"id": "strike", "name": "Fixture Strike"}]}]
+	var roster: Dictionary = {"heroes": [{"id": "fixture-hero", "defId": "fixture-class"}]}
+	var names: Dictionary = bridge._battle_labels(roster, game.state)
+	check(names.skills["fixture-hero"].strike == "夹具斩击", "Names use current hero skills and the game locale")
+	check(names.skills["fixture-hero"]["catalog-only"] == "Catalog Only", "Missing hero skill names fall back to the matching catalog")
+	check(not names.skills["fixture-hero"].has("unrelated"), "Other hero classes cannot supply skill attribution")
+	check(names.reactions.shatter == "夹具反应", "Reaction names use the game reaction catalog and locale")
+	check(bridge._battle_labels({}, {}).skills.is_empty(), "Missing roster never fabricates skill attribution")
 	net._response_arrived.connect(bridge._capture)
 	var panel: FakePanel = FakePanel.new()
 	add_child(panel)
 	panel.bridge = bridge
 	bridge.panel = panel
-	bridge.sima = {"run": {"id": "fixture-run", "nodo": "fixture-boss", "hechos": []}}
+	bridge.sima = {"run": {"id": "fixture-run", "nodo": "fixture-boss", "hechos": [], "heroes": roster.heroes}}
 	panel._data = bridge.sima.duplicate(true)
 	net.latest = bridge.sima.duplicate(true)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(bridge.DIR))
@@ -82,6 +97,9 @@ func _ready() -> void:
 	check(snap.lastAction.id == "action-a" and snap.lastAction.confirmed and snap.lastAction.ok, "Successful action receipt is retained with its command ID")
 	check(snap.lastBattle.commandId == "action-a", "Battle receipt carries its exact command ID")
 	check(snap.lastBattle.before.id == "fixture-run" and snap.lastBattle.before.nodo == "fixture-boss", "Battle receipt preserves run and room attribution")
+	check(snap.lastBattle.labels.skills["fixture-hero"].strike == "夹具斩击" and snap.lastBattle.labels.reactions.shatter == "夹具反应", "Battle archives its own skill and reaction labels")
+	game.state.heroes[0].skills[0].name = "Changed after battle"
+	check(snap.lastBattle.labels.skills["fixture-hero"].strike == "夹具斩击", "Later hero changes cannot rename historical battle labels")
 	check(bridge.receipt.ok and net._results.is_empty(), "Receipt is captured before Net consumes its response dictionary")
 	cmd.id = "refresh-a"
 	cmd.method = "local.refresh"

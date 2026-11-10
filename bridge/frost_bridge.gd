@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.4"
+const VERSION: String = "0.3.5"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -169,7 +169,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 	var issued: float = float(cmd.get("issuedAt", 0))
 	if absf(Time.get_unix_time_from_system() - issued) > 20.0:
 		return {"ok": false, "error": "操作已过期"}
-	var run: Dictionary = sima.get("run", {}) if sima.get("run") is Dictionary else {}
+	var run: Dictionary = sima["run"].duplicate(true) if sima.get("run") is Dictionary else {}
 	if str(cmd.get("runId", "")) != str(run.get("id", "")) or str(cmd.get("nodeId", "")) != str(run.get("nodo", "")):
 		return {"ok": false, "error": "深渊状态已变化，重新决策"}
 	if net.has_method("is_open") and not bool(net.call("is_open")):
@@ -181,6 +181,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "游戏正在处理请求，本次操作尚未发出", "retryable": true}
 	p.set("_data", sima.duplicate(true))
 	var state_before: Dictionary = _state()
+	var battle_labels: Dictionary = _battle_labels(run, state_before)
 	var inventory_observed: bool = state_before.get("inventory") is Array
 	var inventory_ids: Dictionary = {}
 	for item_v in state_before.get("inventory", []):
@@ -216,7 +217,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 			loot_receipt["piezas"] = pieces
 		last_loot["botin"] = loot_receipt
 	if receipt.get("data") is Dictionary and receipt["data"].get("result") is Dictionary:
-		last_battle = {"commandId": str(cmd.get("id", "")), "time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run}
+		last_battle = {"commandId": str(cmd.get("id", "")), "time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run, "labels": battle_labels}
 		last_battle["lootEvidence"] = last_loot.duplicate(true)
 		_save("battle.json", last_battle)
 	var confirmed: bool = not receipt.is_empty()
@@ -233,6 +234,40 @@ func _command(cmd: Dictionary) -> Dictionary:
 	if journal.size() > 100:
 		journal.pop_front()
 	return {"ok": success, "confirmed": confirmed, "method": method, "error": err, "requestId": request_id, "elapsedMs": elapsed_ms, "retryable": not_sent, "code": "" if confirmed else "receipt_missing"}
+
+func _battle_labels(run: Dictionary, state_before: Dictionary) -> Dictionary:
+	# Freeze display names with this battle, using the game's own catalog and locale.
+	var labels: Dictionary = {"skills": {}, "reactions": {}}
+	var content_v: Variant = game.get("content") if game != null else {}
+	var content: Dictionary = content_v if content_v is Dictionary else {}
+	for hero_v in run.get("heroes", []):
+		if not hero_v is Dictionary:
+			continue
+		var hero: Dictionary = hero_v
+		var names: Dictionary = {}
+		var sources: Array = []
+		for entry in content.get("heroCatalog", []):
+			if entry is Dictionary and str(entry.get("defId", entry.get("id", ""))) != "" and str(entry.get("defId", entry.get("id", ""))) == str(hero.get("defId", "")):
+				sources.append(entry)
+		sources.append(hero)
+		for entry in state_before.get("heroes", []):
+			if entry is Dictionary and str(entry.get("id", "")) != "" and str(entry.get("id", "")) == str(hero.get("id", "")):
+				sources.append(entry)
+		for entry in sources:
+			for skill_v in entry.get("skills", []):
+				if skill_v is Dictionary:
+					var sid: String = str(skill_v.get("id", ""))
+					var name_text: String = str(skill_v.get("name", ""))
+					if sid != "" and name_text != "":
+						names[sid] = tr(name_text)
+		labels["skills"][str(hero.get("id", ""))] = names
+	for reaction_v in content.get("reactions", []):
+		if reaction_v is Dictionary:
+			var rid: String = str(reaction_v.get("id", ""))
+			var name_text: String = str(reaction_v.get("name", ""))
+			if rid != "" and name_text != "":
+				labels["reactions"][rid] = tr(name_text)
+	return labels
 
 func _item_for_log(item: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
