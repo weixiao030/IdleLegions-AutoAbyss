@@ -256,6 +256,7 @@ static class SelfTest
             FallbackSelectionTests.Run(Assert);
             CardFlowTests.Run(Assert).GetAwaiter().GetResult();
             ResilienceTests.Run(Assert).GetAwaiter().GetResult();
+            RecoveryTests.Run(Assert).GetAwaiter().GetResult();
             J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = true, checks }); return 0;
         }
         catch (Exception e) { J.Write(Path.Combine(Paths.Data, "self-test.json"), new { ok = false, checks, error = e.ToString() }); return 1; }

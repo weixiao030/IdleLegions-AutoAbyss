@@ -6,9 +6,22 @@ namespace FrostAbyss;
 // An unchanged state is never proof that a resource-consuming request failed.
 static class RecoveryRules
 {
-    internal static bool Completed(string method, JsonObject args, JsonNode? before, JsonNode? after)
+    internal static bool Completed(string method, JsonObject args, JsonNode? before, JsonNode? after, string commandId = "")
     {
         var b = before.At("sima", "run"); var a = after.At("sima", "run");
+        var action = after.At("lastAction");
+        if (commandId != "" && action.At("id").S() == commandId && action.At("method").S() == method
+            && action.At("ok").B() && action.At("confirmed").B()) return true;
+        // A final victory or defeat can remove the run entirely. A new battle
+        // receipt attributed to this run and room is still positive evidence.
+        var battle = after.At("lastBattle");
+        if (method is "sima.fight" or "sima.open" && b != null && (a == null || b.At("id").S() == a.At("id").S())
+            && b.At("id").S() != "" && b.At("nodo").S() != ""
+            && battle.At("time").N() > before.At("lastBattle", "time").N()
+            && battle.At("method").S() == method && battle.At("before", "id").S() == b.At("id").S()
+            && battle.At("before", "nodo").S() == b.At("nodo").S()
+            && battle.At("result", "win") is System.Text.Json.Nodes.JsonValue win && win.TryGetValue<bool>(out _)
+            && (battle.At("commandId").S() == "" || commandId != "" && battle.At("commandId").S() == commandId)) return true;
         if (b == null || a == null || b.At("id").S() == "" || b.At("id").S() != a.At("id").S()) return false;
         var node = b.At("nodo").S();
         bool NewlyDone() => node != "" && !b.At("hechos").A().Any(n => n.S() == node)
@@ -43,3 +56,5 @@ static class RecoveryRules
         }
     }
 }
+
+sealed class UnknownOutcomeException(string message) : Exception(message);

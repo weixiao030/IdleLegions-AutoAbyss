@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.3"
+const VERSION: String = "0.3.4"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -13,6 +13,7 @@ var elapsed: float = 0.0
 var busy: bool = false
 var seen: String = ""
 var response: Dictionary = {}
+var last_action: Dictionary = {}
 var last_error: String = ""
 var seq: int = 0
 var sima: Dictionary = {}
@@ -62,7 +63,12 @@ func _tick() -> void:
 			seen = ident
 			response = await _command(cmd)
 			response["id"] = ident
+			if ACTIONS.has(str(cmd.get("method", ""))):
+				last_action = response.duplicate(true)
 			_save("response.json", response)
+			# Publish the post-command state before any further network wait.
+			last_read = Time.get_ticks_msec()
+			_snapshot()
 	if not _state().is_empty() and Time.get_ticks_msec() - last_read > 5000 and not _fighting():
 		last_read = Time.get_ticks_msec()
 		var r: Dictionary = await net.call("request", "sima.get", {})
@@ -210,7 +216,7 @@ func _command(cmd: Dictionary) -> Dictionary:
 			loot_receipt["piezas"] = pieces
 		last_loot["botin"] = loot_receipt
 	if receipt.get("data") is Dictionary and receipt["data"].get("result") is Dictionary:
-		last_battle = {"time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run}
+		last_battle = {"commandId": str(cmd.get("id", "")), "time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run}
 		last_battle["lootEvidence"] = last_loot.duplicate(true)
 		_save("battle.json", last_battle)
 	var confirmed: bool = not receipt.is_empty()
@@ -262,7 +268,7 @@ func _snapshot() -> void:
 	if rid != cache_run:
 		peeks.clear()
 		cache_run = rid
-	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": not st.is_empty(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "lastLoot": last_loot, "error": last_error, "lastCommand": response, "journal": journal})
+	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": not st.is_empty(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "lastLoot": last_loot, "error": last_error, "lastCommand": response, "lastAction": last_action, "journal": journal})
 
 func _clean(v: Variant) -> Variant:
 	if v is Dictionary:

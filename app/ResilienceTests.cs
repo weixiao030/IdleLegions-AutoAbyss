@@ -17,6 +17,7 @@ static class ResilienceTests
             Paths.Data = Path.Combine(temp, "profile"); Paths.GameData = Path.Combine(temp, "game");
             Directory.CreateDirectory(Paths.Bridge);
             File.WriteAllText(Path.Combine(Paths.Bridge, "session.key"), new string('x', 64));
+            Bridge RecoveringBridge() => new() { RecoveryDelays = Enumerable.Repeat(TimeSpan.FromMilliseconds(10), 6).ToArray() };
             check(new Settings() is { SkipEightHitPact: true, SkipDodgePact: true, RetryTimeouts: true }, "新增契约避让与超时恢复默认开启");
             var legacy = JsonSerializer.Deserialize<Settings>("{}", J.Options)!;
             check(legacy is { SkipEightHitPact: true, SkipDodgePact: true, RetryTimeouts: true }, "旧配置缺少新字段时保留默认避让和恢复");
@@ -167,19 +168,19 @@ static class ResilienceTests
                 var b = Fixture().At("sima", "run")!;
                 check(RevivalRules.Error(b, b, "mago") != null && RevivalRules.Choice(state.At("sima", "run")) == null, "成功回执但未站起时拒绝继续，无眼泪不派复活");
                 mode = "lost"; state = Fixture(); requests.Clear(); Publish();
-                var recovered = await new Bridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None);
-                check(recovered.At("recovered").B() && requests.SequenceEqual(["sima.tear:mago", "local.refresh:"]) && state.At("sima", "run", "lagrimas").N() == 1, "复活已成功但回执丢失：只重查一次，核验后继续，不重复花眼泪");
+                var recovered = await RecoveringBridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None);
+                check(recovered.At("recovered").B() && requests.SequenceEqual(["sima.tear:mago"]) && state.At("sima", "run", "lagrimas").N() == 1, "复活已成功但回执丢失：直接用最新快照核验，不额外查询或重复花眼泪");
                 mode = "unknown"; state = Fixture(); requests.Clear(); Publish(); var paused = false;
-                try { await new Bridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None); } catch (Exception e) { paused = e.Message.Contains("恢复2次"); }
-                check(paused && requests.Count == 3 && requests.Count(r => r.StartsWith("sima.tear")) == 1 && state.At("sima", "run", "lagrimas").N() == 2, "未知复活结果最多重查两次，仍不明确暂停且不重发消耗操作");
+                try { await RecoveringBridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None); } catch (Exception e) { paused = e is UnknownOutcomeException; }
+                check(paused && requests.Count == 7 && requests.Count(r => r.StartsWith("sima.tear")) == 1 && state.At("sima", "run", "lagrimas").N() == 2, "未知复活结果最多核验六次，仍不明确暂停且不重发消耗操作");
                 mode = "battle"; state = Fixture(); state["sima"]!["run"]!["hechos"] = new JsonArray(); requests.Clear(); Publish();
-                recovered = await new Bridge().Send("sima.fight", new(), CancellationToken.None);
+                recovered = await RecoveringBridge().Send("sima.fight", new(), CancellationToken.None);
                 check(recovered.At("recovered").B() && requests.SequenceEqual(["sima.fight:", "local.refresh:"]), "战斗超时后查询发现房间已结算，自动继续且不重复战斗");
                 mode = "unsent"; requests.Clear(); Publish();
-                await new Bridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None);
+                await RecoveringBridge().Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None);
                 check(requests.Count == 2 && requests.All(r => r == "sima.tear:mago"), "桥接明确证明尚未发出的操作允许自动重试");
                 mode = "readonly"; requests.Clear(); Publish();
-                await new Bridge().Send("sima.peek", new() { ["nodoId"] = "next" }, CancellationToken.None);
+                await RecoveringBridge().Send("sima.peek", new() { ["nodoId"] = "next" }, CancellationToken.None);
                 check(requests.SequenceEqual(["sima.peek:", "sima.peek:"]), "只读战斗预览超时自动重试后恢复");
                 mode = "unknown"; requests.Clear(); Publish(); paused = false;
                 try { await new Bridge { RetryTimeouts = false }.Send("sima.tear", new() { ["heroId"] = "mago" }, CancellationToken.None); } catch { paused = true; }

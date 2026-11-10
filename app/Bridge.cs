@@ -9,6 +9,10 @@ namespace FrostAbyss;
 
 sealed class Bridge
 {
+    public const string BundledVersion = "0.3.4";
+    internal TimeSpan[] RecoveryDelays { get; init; } = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(15)];
+    internal TimeSpan RecoveryTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    public static bool NeedsUpdate(JsonNode? snapshot) => snapshot != null && (!Version.TryParse(snapshot.At("version").S(), out var version) || version < Version.Parse(BundledVersion));
     readonly SemaphoreSlim gate = new(1, 1);
     readonly object readLock = new();
     JsonNode? lastGood;
@@ -43,28 +47,53 @@ sealed class Bridge
             if (!RetryTimeouts || !Recoverable(result, method)) throw Failure(result, method);
             // Unknown outcomes are reconciled with read-only state, never replayed.
             // A command is resent only when the bridge proves it was not dispatched.
-            for (int attempt = 1; attempt <= 2; attempt++)
+            for (int attempt = 1; attempt <= 2 && (result.At("retryable").B() || method == "sima.peek"); attempt++)
             {
-                if (ct.IsCancellationRequested) throw Failure(result, method);
-                Notice?.Invoke($"{method} 回执异常，自动恢复 {attempt}/2：" + (result.At("retryable").B() || method == "sima.peek" ? "重试未发出或只读请求。" : "查询最新游戏状态，核验操作是否已完成。"));
-                await Task.Delay(1000);
-                if (ct.IsCancellationRequested) throw Failure(result, method);
-                if (result.At("retryable").B() || method == "sima.peek")
-                {
-                    result = await Dispatch(method, args, ct);
-                    if (result.At("ok").B()) return result;
-                    if (!Recoverable(result, method)) throw Failure(result, method);
-                    continue;
-                }
-                var refresh = await Dispatch("local.refresh", new(), ct);
+                Notice?.Invoke($"{method} 回执异常，重试 {attempt}/2：仅重试明确未发出或只读的请求。");
+                await Task.Delay(RecoveryDelays[0], ct);
+                result = await Dispatch(method, args, ct);
+                if (result.At("ok").B()) return result;
+                if (!Recoverable(result, method)) throw Failure(result, method);
+            }
+            if (result.At("retryable").B() || method == "sima.peek") throw Failure(result, method);
+            var recovery = Stopwatch.StartNew();
+            string lastRefreshError = "";
+            for (int attempt = 0; attempt < RecoveryDelays.Length && recovery.Elapsed < RecoveryTimeout; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
                 var after = Snapshot;
-                if (refresh.At("ok").B() && Fresh(after) && RecoveryRules.Completed(method, args, before, after))
+                if (Fresh(after) && RecoveryRules.Completed(method, args, before, after, result.At("id").S()))
+                {
+                    Notice?.Invoke(method + " 已通过最新游戏状态核验完成，继续下潜。");
+                    return new JsonObject { ["ok"] = true, ["confirmed"] = true, ["recovered"] = true, ["id"] = result.At("id").S() };
+                }
+                Notice?.Invoke($"{method} 回执异常，状态核验 {attempt + 1}/{RecoveryDelays.Length}：等待游戏同步，只查询状态，不重复执行操作。");
+                var remaining = RecoveryTimeout - recovery.Elapsed;
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(RecoveryDelays[attempt] < remaining ? RecoveryDelays[attempt] : remaining, ct);
+                if (recovery.Elapsed >= RecoveryTimeout) break;
+                // A busy bridge is still finishing the original command. Do not
+                // overwrite its mailbox or mistake the last cached state for a refusal.
+                after = Snapshot;
+                if (Fresh(after) && RecoveryRules.Completed(method, args, before, after, result.At("id").S()))
+                {
+                    Notice?.Invoke(method + " 已通过最新游戏状态核验完成，继续下潜。");
+                    return new JsonObject { ["ok"] = true, ["confirmed"] = true, ["recovered"] = true, ["id"] = result.At("id").S() };
+                }
+                if (!Fresh(after) || after.At("busy").B()) continue;
+                remaining = RecoveryTimeout - recovery.Elapsed;
+                if (remaining <= TimeSpan.Zero) break;
+                var refresh = await Dispatch("local.refresh", new(), ct, remaining);
+                lastRefreshError = refresh.At("ok").B() ? "" : refresh.At("error").S();
+                after = Snapshot;
+                if (refresh.At("ok").B() && Fresh(after) && RecoveryRules.Completed(method, args, before, after, result.At("id").S()))
                 {
                     Notice?.Invoke(method + " 已通过最新游戏状态核验完成，继续下潜。");
                     return new JsonObject { ["ok"] = true, ["confirmed"] = true, ["recovered"] = true, ["id"] = result.At("id").S() };
                 }
             }
-            throw new Exception(method + " 自动恢复2次后仍无法确认操作结果，已暂停并保留深渊进度。请在游戏中核对后继续。原始原因：" + result.At("error").S());
+            var versionHint = NeedsUpdate(Snapshot) ? $" 当前游戏桥接 {Snapshot.At("version").S("未知")}，请正常关闭游戏，在连接设置更新至 {BundledVersion} 后重新登录。" : "";
+            throw new UnknownOutcomeException(method + " 等待状态同步后仍无法确认结果，已暂停并保留深渊进度。请在游戏中核对后继续。" + versionHint + " 原始原因：" + result.At("error").S() + (lastRefreshError == "" ? "" : "；状态查询：" + lastRefreshError));
         }
         finally { gate.Release(); }
     }
@@ -73,7 +102,7 @@ sealed class Bridge
         || result.At("error").S().Contains("未收到操作回执")
         || method == "sima.peek" && (result.At("error").S().Contains("respuesta") || result.At("error").S().Contains("Conexión"));
     static Exception Failure(JsonNode result, string method) => new(method + "：" + result.At("error").S("游戏拒绝操作"));
-    async Task<JsonNode> Dispatch(string method, JsonObject args, CancellationToken ct)
+    async Task<JsonNode> Dispatch(string method, JsonObject args, CancellationToken ct, TimeSpan? timeout = null)
     {
         ct.ThrowIfCancellationRequested();
         var s = Snapshot;
@@ -83,7 +112,9 @@ sealed class Bridge
         var key = File.ReadAllText(Path.Combine(Paths.Bridge, "session.key")).Trim();
         J.Write(Path.Combine(Paths.Bridge, "command.json"), new { id, key, method, args, issuedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, runId = s.At("sima", "run", "id").S(), nodeId = s.At("sima", "run", "nodo").S() });
         // Once dispatched, observe the receipt even when the user pauses.
-        for (int i = 0; i < 240; i++)
+        var elapsed = Stopwatch.StartNew();
+        var deadline = timeout ?? TimeSpan.FromSeconds(60);
+        while (elapsed.Elapsed < deadline)
         {
             await Task.Delay(250);
             var r = J.Read(Path.Combine(Paths.Bridge, "response.json"));
@@ -92,11 +123,12 @@ sealed class Bridge
             for (int j = 0; j < 150; j++)
             {
                 if (Snapshot.At("lastCommand", "id").S() == id) return r!;
+                if (elapsed.Elapsed >= deadline) break;
                 await Task.Delay(100);
             }
             return new JsonObject { ["ok"] = false, ["id"] = id, ["code"] = "transport_timeout", ["error"] = "回执已返回，但状态快照未同步。" };
         }
-        return new JsonObject { ["ok"] = false, ["id"] = id, ["code"] = "transport_timeout", ["error"] = "60秒未收到桥接回执，操作结果未知。" };
+        return new JsonObject { ["ok"] = false, ["id"] = id, ["code"] = "transport_timeout", ["error"] = $"{deadline.TotalSeconds:0.#}秒未收到桥接回执，操作结果未知。" };
     }
     public static string Resource(string name)
     {
