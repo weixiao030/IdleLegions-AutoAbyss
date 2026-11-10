@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.2"
+const VERSION: String = "0.3.3"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -24,6 +24,7 @@ var waiting_id: int = -1
 var receipt: Dictionary = {}
 var cache_run: String = ""
 var last_battle: Dictionary = {}
+var last_loot: Dictionary = {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -173,6 +174,12 @@ func _command(cmd: Dictionary) -> Dictionary:
 	if bool(p.get("_req_inflight")):
 		return {"ok": false, "error": "游戏正在处理请求，本次操作尚未发出", "retryable": true}
 	p.set("_data", sima.duplicate(true))
+	var state_before: Dictionary = _state()
+	var inventory_observed: bool = state_before.get("inventory") is Array
+	var inventory_ids: Dictionary = {}
+	for item_v in state_before.get("inventory", []):
+		if item_v is Dictionary and str(item_v.get("id", "")) != "":
+			inventory_ids[str(item_v["id"])] = true
 	active = true
 	receipt = {}
 	waiting_id = int(net.get("_next_id"))
@@ -188,8 +195,23 @@ func _command(cmd: Dictionary) -> Dictionary:
 	var data_v: Variant = p.get("_data")
 	if data_v is Dictionary:
 		sima = data_v.duplicate(true)
+	last_loot = {"commandId": str(cmd.get("id", "")), "method": method, "time": Time.get_unix_time_from_system(), "inventoryObserved": inventory_observed and _state().get("inventory") is Array, "inventoryAdded": []}
+	if bool(last_loot["inventoryObserved"]):
+		for item_v in _state().get("inventory", []):
+			if item_v is Dictionary and str(item_v.get("id", "")) != "" and not inventory_ids.has(str(item_v["id"])):
+				last_loot["inventoryAdded"].append(_item_for_log(item_v))
+	if receipt.get("data") is Dictionary and receipt["data"].get("botin") is Dictionary:
+		var loot_receipt: Dictionary = _clean(receipt["data"]["botin"])
+		if loot_receipt.get("piezas") is Array:
+			var pieces: Array = []
+			for item_v in loot_receipt["piezas"]:
+				if item_v is Dictionary:
+					pieces.append(_item_for_log(item_v))
+			loot_receipt["piezas"] = pieces
+		last_loot["botin"] = loot_receipt
 	if receipt.get("data") is Dictionary and receipt["data"].get("result") is Dictionary:
 		last_battle = {"time": Time.get_unix_time_from_system(), "method": method, "result": receipt["data"]["result"], "vista": receipt["data"].get("vista", {}), "before": run}
+		last_battle["lootEvidence"] = last_loot.duplicate(true)
 		_save("battle.json", last_battle)
 	var confirmed: bool = not receipt.is_empty()
 	var success: bool = confirmed and bool(receipt.get("ok", false))
@@ -205,6 +227,16 @@ func _command(cmd: Dictionary) -> Dictionary:
 	if journal.size() > 100:
 		journal.pop_front()
 	return {"ok": success, "confirmed": confirmed, "method": method, "error": err, "requestId": request_id, "elapsedMs": elapsed_ms, "retryable": not_sent, "code": "" if confirmed else "receipt_missing"}
+
+func _item_for_log(item: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for key in ["id", "name", "nameEn", "nameEs", "nameZh", "nombre", "rarity", "nameParts"]:
+		if item.has(key):
+			out[key] = item[key]
+	var naming: Script = load("res://util/nombre_objeto.gd") if ResourceLoader.exists("res://util/nombre_objeto.gd") else null
+	if naming != null and naming.has_method("de"):
+		out["displayName"] = str(naming.call("de", item))
+	return out
 
 func _snapshot() -> void:
 	seq += 1
@@ -230,7 +262,7 @@ func _snapshot() -> void:
 	if rid != cache_run:
 		peeks.clear()
 		cache_run = rid
-	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": not st.is_empty(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "error": last_error, "lastCommand": response, "journal": journal})
+	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": not st.is_empty(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "lastLoot": last_loot, "error": last_error, "lastCommand": response, "journal": journal})
 
 func _clean(v: Variant) -> Variant:
 	if v is Dictionary:

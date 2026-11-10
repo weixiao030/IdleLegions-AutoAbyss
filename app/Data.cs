@@ -52,6 +52,7 @@ sealed class Settings
     public int MaxRuns { get; set; } = 1;
     public bool LoopUntilRopesEmpty { get; set; } = false;
     public bool PreferFreezeBuild { get; set; } = true;
+    public int StrategyId { get; set; } = 1;
     public int ClearFloors { get; set; } = 0;
     public int ReserveRopes { get; set; } = 2;
     public double RetreatHp { get; set; } = 0;
@@ -91,6 +92,7 @@ sealed class Settings
     public static bool ValidFormation(string[]? f) => FormationRules.Valid(f);
     public void Validate()
     {
+        if (StrategyId is < 1 or > 3) throw new Exception("请选择策略一、策略二或策略三。");
         if (AvoidEliteIds == null || AvoidEliteIds.Length > EliteRules.Catalog.Length || AvoidEliteIds.Any(id => id == null || !EliteRules.Catalog.Any(e => e.Id == id)) || AvoidEliteIds.Distinct().Count() != AvoidEliteIds.Length) throw new Exception("精英避让名单无效，请从列表中选择不同精英；可留空。");
         if (!ValidFormation(Formation)) throw new Exception("请选择 4 个不同职业，按前排到后排排列。");
         // No product-imposed ranges. Integer representation and finite numeric

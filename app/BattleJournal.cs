@@ -1,0 +1,269 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace FrostAbyss;
+
+static class BattleJournal
+{
+    internal static JsonObject Capture(JsonNode? battleNode, JsonNode? runBefore, JsonNode? snapshotAfter,
+        int round, int strategy, string directory, int number)
+    {
+        var battle = battleNode?.DeepClone() as JsonObject ?? new JsonObject();
+        var before = battle.At("before");
+        var result = battle.At("result");
+        int depth = (int)before.At("profundidad").N(runBefore.At("profundidad").N());
+        string runId = before.At("id").S(runBefore.At("id").S());
+        string node = before.At("nodo").S(runBefore.At("nodo").S());
+        var heroes = before.At("heroes").A().Select(x => x.DeepClone()).ToArray();
+        var events = result.At("events").A().Select(x => x.DeepClone()).ToArray();
+        var resourceBefore = (runBefore.At("botin") ?? before.At("botin"))?.DeepClone();
+        var resourceAfter = snapshotAfter.At("sima", "run", "botin")?.DeepClone();
+        var afterRunId = snapshotAfter.At("sima", "run", "id").S();
+        if (runId != "" && afterRunId != "" && runId != afterRunId) resourceAfter = null;
+        var resourceDelta = ResourceDelta(resourceBefore, resourceAfter);
+        var cards = before.At("reliquias").A().Concat(before.At("blasones").A()).Concat(before.At("buffs").A())
+            .Select(c => new { id = c.At("id").S(), name = J.Name(c), description = c.At("descZh").S(c.At("desc").S()) })
+            .ToArray();
+        Directory.CreateDirectory(directory);
+        var fileName = $"run-{round:D3}-P{depth}-{number:D5}.json";
+        J.Write(Path.Combine(directory, fileName), new
+        {
+            round, strategy, depth, runId, node,
+            capturedAt = DateTimeOffset.Now,
+            roster = heroes,
+            cards,
+            resourceBefore,
+            resourceAfter,
+            resourceDelta,
+            authoritativeBattle = battle
+        });
+        var sourceFile = Path.GetRelativePath(Paths.Data, Path.Combine(directory, fileName)).Replace('\\', '/');
+        return new JsonObject
+        {
+            ["round"] = round,
+            ["strategy"] = strategy,
+            ["depth"] = depth,
+            ["runId"] = runId,
+            ["node"] = node,
+            ["won"] = result.At("win").B(),
+            ["truncated"] = result.At("truncated").B(),
+            ["eventCount"] = events.Length,
+            ["durationSec"] = result.At("durationSec").N(),
+            ["sourceFile"] = sourceFile,
+            ["resourceDelta"] = JsonSerializer.SerializeToNode(resourceDelta, J.Options),
+            ["heroes"] = JsonSerializer.SerializeToNode(HeroStats(result, heroes, events), J.Options),
+            ["cardProcs"] = JsonSerializer.SerializeToNode(CardProcs(cards, events), J.Options),
+            ["loot"] = DropJournal.Read(battle.At("lootEvidence"))
+        };
+    }
+
+    internal static object[] Summarize(IEnumerable<JsonObject> records) => records
+        .Select(x => x.DeepClone())
+        .OrderBy(x => x.At("round").N())
+        .ThenBy(x => x.At("depth").N())
+        .Select(x => (object)x)
+        .ToArray();
+
+    internal static string Report(IEnumerable<JsonObject> records)
+    {
+        var all = records.Select(x => x.DeepClone()).OrderBy(x => x.At("round").N()).ThenBy(x => x.At("depth").N()).ToArray();
+        var text = new System.Text.StringBuilder();
+        text.AppendLine("## 逐层战斗统计\n");
+        if (all.Length == 0)
+        {
+            text.AppendLine("本段没有收到可核验的真实战斗回执。\n");
+            return text.ToString();
+        }
+
+        foreach (var group in all.GroupBy(x => (Round: (int)x.At("round").N(), Depth: (int)x.At("depth").N())))
+        {
+            text.AppendLine($"### 第 {group.Key.Round} 轮 · P{group.Key.Depth}\n");
+            text.AppendLine(HeroHeader);
+            WriteHeroRows(text, group.ToArray());
+            text.AppendLine($"\n战斗数：{group.Count()}；胜利：{group.Count(x => x.At("won").B())}；");
+            text.AppendLine($"事件：{group.Sum(x => x.At("eventCount").N()):N0}；日志截断：{(group.Any(x => x.At("truncated").B()) ? "是，明细不完整" : "否")}。\n");
+            WriteResourceRows(text, group.ToArray());
+            WriteCardRows(text, group.ToArray());
+            var files = group.Select(x => x.At("sourceFile").S()).Where(x => x != "");
+            text.AppendLine("原始战斗回执：" + string.Join("、", files) + "。\n");
+        }
+
+        foreach (var group in all.GroupBy(x => (int)x.At("round").N()))
+        {
+            text.AppendLine($"### 第 {group.Key} 轮汇总\n");
+            text.AppendLine(HeroHeader);
+            WriteHeroRows(text, group.ToArray());
+            WriteInsights(text, group.ToArray());
+            text.AppendLine();
+        }
+
+        text.AppendLine("### 全段角色汇总\n");
+        text.AppendLine(HeroHeader);
+        WriteHeroRows(text, all);
+        WriteInsights(text, all);
+        text.AppendLine("\n### 卡牌与伤害归因\n\n战斗事件中的 `rel` 触发（包括零伤害效果触发）会单独统计；遗物的常驻攻击、攻速、减速及异常增伤没有独立伤害事件时，不能从总伤害中准确拆出贡献比例。表中“触发占比”仅占已标记的 `rel` 直接伤害，不代表卡牌完整增伤。\n");
+        WriteCardRows(text, all);
+        text.AppendLine("输出、承受伤害来自战斗事件。敌方事件伤害可能包含护盾、免疫和过量伤害，不等于实际扣血；`result.sima.dano` 为结算生命损失。暴击、技能及反应统计是命中事件数，不代表技能施放次数。事件截断时所有事件统计均为不完整下界。\n");
+        return text.ToString();
+    }
+
+    internal static string AcquisitionReport(IEnumerable<object> receipts)
+    {
+        var rows = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)!)
+            .Where(x => x.At("cardId").S() != "")
+            .GroupBy(x => ((int)x.At("round").N(), (int)x.At("depth").N()));
+        var text = new System.Text.StringBuilder("## 已确认取得的卡牌\n\n| 轮次 | 深度 | 卡牌 | 效果文本 |\n|---:|---:|---|---|\n");
+        int count = 0;
+        foreach (var group in rows.OrderBy(x => x.Key.Item1).ThenBy(x => x.Key.Item2))
+        foreach (var card in group)
+        {
+            count++;
+            text.AppendLine($"| {group.Key.Item1} | P{group.Key.Item2} | {card.At("cardName").S(card.At("cardId").S())} (`{card.At("cardId").S()}`) | {card.At("cardDescription").S().Replace("|", "/")} |");
+        }
+        if (count == 0) return "## 已确认取得的卡牌\n\n本段尚无已确认的卡牌选择回执。\n";
+        return text.ToString();
+    }
+
+    const string HeroHeader = "| 角色 | 输出 | 输出占比 | DPS | 承受事件伤害 | 结算生命损失（已知/场数） | 暴击命中 | 技能命中 | 反应命中 | 反应/遗物/技能/其他输出 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|";
+
+    static void WriteHeroRows(System.Text.StringBuilder text, JsonNode[] battles)
+    {
+        var stats = battles.SelectMany(x => x.At("heroes").A()).GroupBy(x => x.At("name").S())
+            .Select(g => new
+            {
+                Name = g.Key,
+                Damage = g.Sum(x => x.At("damage").N()),
+                Duration = battles.Where(b => b.At("heroes").A().Any(h => h.At("name").S() == g.Key)).Sum(b => b.At("durationSec").N()),
+                Taken = g.Sum(x => x.At("damageTaken").N()),
+                HpLoss = g.Sum(x => x.At("hpLoss").N()),
+                HpKnown = g.Count(x => x.At("hpLoss") != null),
+                Count = g.Count(),
+                Sources = g.All(x => x.At("damageSources") == null) ? "未记录" : string.Join(" / ", new[] { "reaction", "relic", "skill", "other" }.Select(k => g.Sum(x => x.At("damageSources", k).N()).ToString("N0"))),
+                Critical = g.Sum(x => x.At("criticalEvents").N()),
+                Skills = g.Sum(x => x.At("skillEvents").N()),
+                Reactions = g.Sum(x => x.At("reactionEvents").N())
+            }).OrderByDescending(x => x.Damage).ToArray();
+        double total = stats.Sum(x => x.Damage);
+        foreach (var x in stats)
+            text.AppendLine($"| {x.Name} | {x.Damage:N0} | {(total > 0 ? x.Damage / total : 0):P1} | {(x.Duration > 0 ? (x.Damage / x.Duration).ToString("N1") : "未确认")} | {x.Taken:N0} | {(x.HpKnown > 0 ? x.HpLoss.ToString("N0") : "未确认")} ({x.HpKnown}/{x.Count}) | {x.Critical:N0} | {x.Skills:N0} | {x.Reactions:N0} | {x.Sources} |");
+        text.AppendLine("\n输出来源按反应 → 遗物 → 技能 → 其他的顺序互斥归类，不重复相加；其他包含无来源标记的普通伤害。DPS按角色出现的战斗时长加权，截断时是下界。旧记录缺少来源细分时不做反推。\n");
+    }
+
+    static void WriteInsights(System.Text.StringBuilder text, JsonNode[] battles)
+    {
+        if (battles.Any(b => b.At("truncated").B()))
+            text.AppendLine("\n分析提示：部分日志截断，先比较未截断的同层战斗，再评估装备或策略收益。\n");
+        var losses = battles.Where(b => !b.At("won").B()).SelectMany(b => b.At("heroes").A())
+            .Where(h => h.At("hpLoss").N() > 0).GroupBy(h => h.At("name").S())
+            .Select(g => new { Name = g.Key, Loss = g.Sum(h => h.At("hpLoss").N()) }).OrderByDescending(x => x.Loss).FirstOrDefault();
+        if (losses != null)
+            text.AppendLine($"\n分析提示：战败场中{losses.Name}结算生命损失合计 {losses.Loss:N0}，建议优先核对该角色的站位、生存装备与护盾覆盖；这些记录不能单独证明最优配装。\n");
+    }
+
+    static void WriteResourceRows(System.Text.StringBuilder text, JsonNode[] battles)
+    {
+        text.AppendLine("| 确认资源差分 | 核心 | 碎屑 | 奥波币 |\n|---|---:|---:|---:|");
+        foreach (var battle in battles)
+        {
+            var delta = battle.At("resourceDelta");
+            text.AppendLine($"| 第{battle.At("round").N()}轮 P{battle.At("depth").N()} | {DeltaText(delta.At("cores"))} | {DeltaText(delta.At("shards"))} | {DeltaText(delta.At("obols"))} |");
+        }
+        text.AppendLine("资源数值为战斗操作前后游戏快照差分；快照缺失记为未确认，不代表独立装备掉落。\n");
+    }
+
+    static void WriteCardRows(System.Text.StringBuilder text, JsonNode[] battles)
+    {
+        var procs = battles.SelectMany(x => x.At("cardProcs").A())
+            .GroupBy(x => x.At("id").S(), StringComparer.Ordinal)
+            .Select(g => new
+            {
+                Id = g.Key,
+                Name = g.First().At("name").S(),
+                Effect = g.First().At("description").S(),
+                Damage = g.Sum(x => x.At("damage").N()),
+                Events = g.Sum(x => x.At("events").N()),
+                Total = battles.Sum(x => x.At("cardProcs").A().Sum(p => p.At("damage").N()))
+            }).Where(x => x.Id != "").OrderByDescending(x => x.Damage).ToArray();
+        if (procs.Length == 0)
+        {
+            text.AppendLine("没有收到带 `rel` 标记的遗物触发事件；卡牌效果仍列于每场原始回执。\n");
+            return;
+        }
+        double totalDamage = battles.Sum(b => b.At("heroes").A().Sum(h => h.At("damage").N()));
+        text.AppendLine("| 遗物 | 已观测效果 | `rel` 触发伤害 | 已标记触发伤害占比 | 占全队输出 | 事件数 |\n|---|---|---:|---:|---:|---:|");
+        foreach (var x in procs)
+        {
+            double pct = x.Total > 0 ? x.Damage / x.Total : 0;
+            text.AppendLine($"| {x.Name} (`{x.Id}`) | {x.Effect.Replace("|", "/")} | {x.Damage:N0} | {pct:P1} | {(totalDamage > 0 ? x.Damage / totalDamage : 0):P1} | {x.Events:N0} |");
+        }
+        text.AppendLine();
+    }
+
+    static object[] HeroStats(JsonNode? result, JsonNode[] roster, JsonNode[] events)
+    {
+        var damageById = result.At("sima", "dano");
+        return roster.Select(hero =>
+        {
+            string id = hero.At("id").S();
+            string role = FormationRules.Name(hero.At("defId").S());
+            if (string.IsNullOrEmpty(role)) role = hero.At("nombre").S(id);
+            string name = hero.At("nombre").S(hero.At("name").S(role));
+            var aliases = new HashSet<string>(new[] { id, name, role }.Where(x => x != ""), StringComparer.OrdinalIgnoreCase);
+            var sourced = events.Where(e => aliases.Contains(e.At("src").S())).ToArray();
+            var damageEvents = sourced.Where(e => e.At("side").S() == "ally" && e.At("dmg").N() > 0).ToArray();
+            string Source(JsonNode e) => e.At("reaction").S() != "" ? "reaction" : e.At("rel").S() != "" ? "relic" : e.At("skill").S() != "" ? "skill" : "other";
+            var incoming = events.Where(e => e.At("side").S() == "enemy" && aliases.Contains(e.At("dst").S()) && e.At("dmg").N() > 0).ToArray();
+            double? hpLoss = damageById is JsonObject map && map.TryGetPropertyValue(id, out var total) ? total.N() : null;
+            double outgoing = sourced.Where(e => e.At("side").S() == "ally").Sum(e => Math.Max(0, e.At("dmg").N()));
+            return new
+            {
+                id,
+                name = role == "" ? name : role,
+                damage = outgoing,
+                hpLoss,
+                dps = result.At("durationSec").N() > 0 ? outgoing / result.At("durationSec").N() : 0,
+                durationSec = result.At("durationSec").N(),
+                damageSources = new[] { "reaction", "relic", "skill", "other" }.ToDictionary(k => k, k => damageEvents.Where(e => Source(e) == k).Sum(e => e.At("dmg").N())),
+                damageSource = "ally-battle-events",
+                damageTaken = incoming.Sum(e => e.At("dmg").N()),
+                criticalEvents = sourced.Count(e => e.At("side").S() == "ally" && e.At("crit").B()),
+                skillEvents = sourced.Count(e => e.At("side").S() == "ally" && e.At("skill").S() != "" && e.At("dmg").N() > 0),
+                reactionEvents = sourced.Count(e => e.At("side").S() == "ally" && e.At("reaction").S() != "" && e.At("dmg").N() > 0),
+                healingObserved = sourced.Where(e => e.At("side").S() == "ally" && e.At("dmg").N() < 0).Sum(e => Math.Abs(e.At("dmg").N()))
+            };
+        }).Cast<object>().ToArray();
+    }
+
+    static object[] CardProcs(object[] cards, JsonNode[] events)
+    {
+        var cardMap = cards.Select(x => JsonSerializer.SerializeToNode(x, J.Options)!).ToArray();
+        double allCardDamage = events.Where(e => e.At("side").S() == "ally" && e.At("rel").S() != "" && e.At("dmg").N() > 0).Sum(e => e.At("dmg").N());
+        return events.Where(e => e.At("side").S() == "ally" && e.At("rel").S() != "")
+            .GroupBy(e => e.At("rel").S(), StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var card = cardMap.FirstOrDefault(x => x.At("id").S() == g.Key);
+                return (object)new
+                {
+                    id = g.Key,
+                    name = card.At("name").S(g.Key),
+                    description = card.At("description").S("效果描述未包含在本次回执中"),
+                    damage = g.Sum(e => Math.Max(0, e.At("dmg").N())),
+                    events = g.Count(),
+                    battleDamage = allCardDamage
+                };
+            }).ToArray();
+    }
+
+    static string DeltaText(JsonNode? n) => n == null ? "未确认" : n.N().ToString("+0;-0;0");
+
+    static double? Difference(JsonNode? before, JsonNode? after, string key) =>
+        before.At(key) == null || after.At(key) == null ? null : after.At(key).N() - before.At(key).N();
+
+    static object ResourceDelta(JsonNode? before, JsonNode? after) => new
+    {
+        cores = Difference(before, after, "nucleos"),
+        shards = Difference(before, after, "esquirlas"),
+        obols = Difference(before, after, "obolos")
+    };
+}

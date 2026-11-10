@@ -119,6 +119,8 @@ static class Cards
     // A temporary badge cannot replace a core or shield that must survive the floor.
     internal static (int Priority, string Reason) BuildValue(JsonNode c, Settings cfg, JsonNode? run, string method, bool strategyFallback = false)
     {
+        if (cfg.StrategyId == 2) return Legacy131.Cards.BuildValue(c, cfg, run, method);
+        if (cfg.StrategyId == 3) return ScoreIceStrategy(c, cfg, run, method, strategyFallback);
         var baseline = CardRules.Baseline(run, method);
         var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);
@@ -172,6 +174,59 @@ static class Cards
         if (fx.Shield > 0 && held.Shield > 0)
             return Score(fx.Shield >= .2 ? 300 : 150, "已有护盾后只少量补防御，优先把选择留给输出");
         return Score(100, "少量防御或其他补充，不抢弹跳与增伤名额");
+    }
+
+    static (int Priority, string Reason) ScoreIceStrategy(JsonNode card, Settings cfg, JsonNode? run, string method, bool strategyFallback)
+    {
+        var baseline = CardRules.Baseline(run, method);
+        var effects = Effects.Parse([card], cfg);
+        var skip = strategyFallback ? null : IceStrategyRules.SkipReason(card, run, cfg, method);
+        if (skip != null) return (-10000, skip);
+        var preference = IceStrategyRules.Preference(card, effects);
+        if (CardRules.SeekingInheritedFreeze(run, cfg))
+            return Cards.IsCore(card, cfg)
+                ? (2500, "ICE 后期方案：普攻冻结核心尚未继承，保持冻结优先规则")
+                : (Cards.Family(card) == "escarcha" ? (1950, "ICE 后期方案：冻结继承前优先冰系牌")
+                    : (-5000 + preference.Rank * 30, "ICE 后期方案：冻结核心优先；本菜单兜底按指定效果比较；" + preference.Reason));
+
+        var bounces = baseline.Select(CardRules.AllTargetEvery).Where(x => x is 4 or 5 or 6).ToHashSet();
+        foreach (var target in new[] { 4, 5, 6 })
+        {
+            if (bounces.Contains(target)) continue;
+            if (CardRules.AllTargetEvery(card) == target)
+            {
+                int priority = 2450 - Array.IndexOf(new[] { 4, 5, 6 }, target) * 10;
+                return (priority, $"ICE 后期方案：必拿每 {target} 次普攻全体弹跳，已补 {bounces.Count}/3 档");
+            }
+        }
+
+        int critEvery = IceStrategyRules.GuaranteedCritEvery(card);
+        var heldCrit = baseline.Select(IceStrategyRules.GuaranteedCritEvery).ToHashSet();
+        if (critEvery is 8 or 10 && !heldCrit.Contains(critEvery))
+            return (critEvery == 8 ? 2420 : 2410, $"ICE 后期方案：必拿每 {critEvery} 次攻击必定暴击，分别补齐 8/10 次档");
+
+        if (preference.Rank > 0)
+            return (2300 + preference.Rank * 8, "ICE 后期方案：指定效果优先；" + preference.Reason);
+
+        var family = Cards.Family(card);
+        if (method != "sima.blason" && IceStrategyRules.Families.Contains(family))
+        {
+            var seriesCards = method == "sima.guarda" ? baseline : run.At("reliquias").A();
+            int count = IceStrategyRules.CountFamily(seriesCards, family);
+            if (count < IceStrategyRules.SeriesTarget)
+                return (2200 - count * 10,
+                    $"ICE 后期方案：{IceStrategyRules.FamilyName(family)}系列 {count}/8，指定效果之后补齐七系各八张");
+        }
+
+        if (family == "brasa" && (IceStrategyRules.HasElementBonus(card) || IceStrategyRules.HasDamage(effects)))
+            return (1350, "ICE 后期方案：系列目标达成后补火系增伤");
+        if (family == "escarcha" && (effects.VsSlow > 0 || effects.Slow > 0))
+            return (1320, "ICE 后期方案：补冰系减速与对减速目标增伤");
+        if (IceStrategyRules.HasDamage(effects))
+            return (1200, "ICE 后期方案：补充可识别的输出增益");
+        if (effects.Shield > 0)
+            return (Effects.Parse(baseline, cfg).Shield > 0 ? 900 : 1000, "ICE 后期方案：输出与系列目标后补充护盾");
+        return (100, "ICE 后期方案：其他补充效果，仍由实战推演决定");
     }
     public static int Priority(JsonNode c, Settings cfg, JsonNode? run = null, string method = "sima.reliquia") => BuildValue(c, cfg, run, method).Priority;
     public static string Reason(JsonNode c, Settings cfg, JsonNode run, string method) => BuildValue(c, cfg, run, method).Reason;

@@ -1,4 +1,5 @@
 {
+  "strategyId": 1,
   "simulations": 2000,
   "seed": 73129,
   "delayMs": 1000,
