@@ -37,9 +37,28 @@ jobs:
       - name: Strategy self tests
         shell: pwsh
         run: |
-          $test = Start-Process -FilePath './release/IdleLegions自动下井.exe' -ArgumentList '--self-test' -Wait -PassThru -WindowStyle Hidden
-          if ($test.ExitCode -ne 0) { throw 'Self tests failed' }
-          Get-Content "$env:LOCALAPPDATA/FrostAbyss/self-test.json"
+          $testDir = Join-Path $env:RUNNER_TEMP 'autoabyss-selftest'
+          $testArgs = @('--self-test', '--self-test-dir', ('"{0}"' -f $testDir))
+          $test = Start-Process -FilePath './release/IdleLegions自动下井.exe' -ArgumentList $testArgs -Wait -PassThru -WindowStyle Hidden
+          $testReport = Join-Path $testDir 'self-test.json'
+          if (-not (Test-Path -LiteralPath $testReport)) { throw "Self-test report missing; exit code $($test.ExitCode)" }
+          $report = Get-Content -LiteralPath $testReport -Raw | ConvertFrom-Json
+          [pscustomobject]@{ ok = $report.ok; checks = @($report.checks).Count; error = $report.error; exitCode = $test.ExitCode } | ConvertTo-Json
+          if ($test.ExitCode -ne 0 -or $report.ok -ne $true) { throw 'Self tests failed' }
+      - name: Preserve self-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-test-diagnostics
+          path: ${{ runner.temp }}/autoabyss-selftest/
+          if-no-files-found: warn
+      - name: Preserve failed build for isolated diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-build-diagnostics
+          path: release/IdleLegions自动下井.exe
+          if-no-files-found: warn
       - name: Package release
         run: python tools/package_release.py
       - uses: actions/upload-artifact@v4
