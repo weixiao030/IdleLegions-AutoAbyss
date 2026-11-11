@@ -108,7 +108,8 @@
 .report-share-track{width:52px;flex:none;height:6px}.report-share-value{min-width:4ch;text-align:right}
 .report-section td:has(>.report-number),.report-section td:has(>.report-share){text-align:right;white-space:nowrap}
 .report-section th.report-numeric-heading{text-align:right}
-.report-section .resource-round-table th,.report-section .resource-round-table td{vertical-align:middle;padding-left:16px;padding-right:16px;text-align:center}
+/* Include row elements so the global first-row cell padding cannot offset this table. */
+.report-section .resource-round-table th,.report-section .resource-round-table tbody tr td{vertical-align:middle;padding-left:16px;padding-right:16px;text-align:center}
 .resource-round-table{table-layout:fixed;min-width:660px}
 .report-section .resource-round-table th:nth-child(1),.report-section .resource-round-table td:nth-child(1){width:9%}
 .resource-round-table th:nth-child(2){width:11%}
