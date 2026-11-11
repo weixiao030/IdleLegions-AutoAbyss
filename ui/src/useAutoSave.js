@@ -1,3 +1,4 @@
+import {searchError} from './searchSettings.js';
 import {customError} from './customStrategy.js';
 import {useEffect, useRef, useState} from 'react';
 
@@ -7,7 +8,8 @@ export function configError(config) {
   if (!config) return '正在载入参数';
   if ([...integers,...decimals].some(k => typeof config[k] !== 'number' || !Number.isFinite(config[k]))) return '请输入完整的有限数字，填写完成后自动保存。';
   if (integers.some(k => !Number.isInteger(config[k]))) return '次数、种子、深度、层数、绳索和毫秒间隔须填写整数。';
-  if (config.strategyId < 1 || config.strategyId > 4) return '请选择策略一至策略四。';
+  if (config.strategyId < 1 || config.strategyId > 7) return '请选择策略一至策略七。';
+  const searchIssue=searchError(config.search);if(searchIssue)return searchIssue;
   if (config.strategyId === 4) return customError(config.customStrategy);
   return '';
 }
@@ -48,15 +50,16 @@ export default function useAutoSave(api, storageKey, locked, onSaved) {
     if(!current.current)return;
     const invalid=configError(current.current);
     if(invalid){setStatus({kind:'invalid',text:invalid});throw Error(invalid);}
-    if(encode(current.current)===saved.current)return;
+    if(encode(current.current)===saved.current){try{localStorage.removeItem(storageKey);}catch{} setStatus({kind:'saved',text:'全部更改已自动保存'});return;}
     if(blocked.current)throw Error('请暂停下潜，等待当前操作结束后自动保存。');
     const sent=current.current, serialized=encode(sent);
     setStatus({kind:'saving',text:'正在自动保存…'});
     const task=api('config',sent);
     writer.current=task;
     try {
-      await task;saved.current=serialized;savedCallback.current(sent);
-      if(encode(current.current)===serialized){try{localStorage.removeItem(storageKey);}catch{} setStatus({kind:'saved',text:'全部更改已自动保存'});}
+      const response=await task,effective=response?.config??sent;
+      saved.current=encode(effective);savedCallback.current(effective);
+      if(encode(current.current)===serialized){current.current=effective;setDraft(effective);try{localStorage.removeItem(storageKey);}catch{} setStatus({kind:'saved',text:'全部更改已自动保存'});}
       else setStatus({kind:'pending',text:'正在保存最新更改…'});
     } catch(e) {
       setStatus({kind:'error',text:`自动保存失败：${e.message} 将自动重试，草稿已保留。`});schedule(4000);throw e;

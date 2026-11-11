@@ -14,39 +14,46 @@ static class CustomStrategyTests
         try
         {
             Paths.Data = root;
-            var cfg = new Settings { StrategyId = 4 };
+            var cfg = new Settings { StrategyId = 4, CustomStrategy = new() { SelectionMode = "family" } };
             var pilot = new Pilot(); pilot.Save(cfg);
-            var core = Card("es_carambano", "escarcha", "Tus autoataques CONGELAN al objetivo");
+            var core = Card("es_glaciar", "escarcha", "Tus autos CONGELAN, y cada 5 tu golpe salta a todos");
             var ice = Card("es_helada", "escarcha", "Tus golpes ralentizan un 15% durante 4 s");
             var bolt = Card("fu_custom_damage", "fulgor", "+10% de daño");
             var fire = Card("br_custom_damage", "brasa", "+30% de daño");
             var ready = new JsonObject { ["profundidad"] = 8, ["llegada"] = new JsonObject { ["reliquias"] = 1 }, ["reliquias"] = new JsonArray(core.DeepClone()), ["blasones"] = new JsonArray(), ["buffs"] = new JsonArray() };
+            var adaptive = new Settings { StrategyId = 4, SkipShieldCardsEarly = false };
+            var rankedAdaptive = Pilot.Rank(CustomStrategy.Choices([bolt, fire], "sima.reliquia", ready, adaptive));
+            check(adaptive.CustomStrategy.SelectionMode == "adaptive" && rankedAdaptive[0].Card.At("id").S() == "br_custom_damage",
+                "策略四默认解除系列置顶，已继承后跨系列选择更高新增收益");
+            adaptive.CustomStrategy.FamilyOrder = adaptive.CustomStrategy.FamilyOrder.Reverse().ToArray();
+            check(Pilot.Rank(CustomStrategy.Choices([bolt, fire], "sima.reliquia", ready, adaptive))[0].Card.At("id").S() == "br_custom_damage",
+                "收益模式不受冰系和系列拖动次序影响");
             var opening = ready.DeepClone(); opening["llegada"]!["reliquias"] = 0;
             string Pick(JsonNode run, string method, params JsonNode[] cards) => Pilot.Rank(pilot.CardChoices(cards, method, run))[0].Card.At("id").S();
-            bool Unavailable(Action action) { try { action(); return false; } catch (Exception e) { return e.Message.Contains("没有可执行的合法卡牌"); } }
+            bool Unavailable(Action action) { try { action(); return false; } catch (Exception e) { return e.Message.Contains("没有") && e.Message.Contains("卡牌"); } }
             check(!CustomStrategy.Inherited(opening, cfg), "策略四本章新获得冻结遗物不能冒充已继承");
             var badgeOnly = ready.DeepClone(); badgeOnly["reliquias"] = new JsonArray(); badgeOnly["blasones"] = new JsonArray(core.DeepClone());
             check(!CustomStrategy.Inherited(badgeOnly, cfg), "策略四临时冻结徽章不能代替遗物继承");
             var incomplete = ready.DeepClone(); incomplete.AsObject().Remove("llegada");
             check(!CustomStrategy.Inherited(incomplete, cfg) && CustomStrategy.Inherited(ready, cfg), "策略四只认可到达回执中的遗物，缺少到达字段继续固定前置");
-            cfg.CustomStrategy.Cards["es_carambano"] = new() { Mode = "block" };
+            cfg.CustomStrategy.Cards["es_glaciar"] = new() { Mode = "block" };
             foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
             {
-                check(Pick(opening, method, fire, ice, core) == "es_carambano", $"策略四{method}固定冰冻前置不受自定义拉黑覆盖");
+                check(Pick(method == "sima.guarda" ? opening : badgeOnly, method, fire, ice, core) == "es_glaciar", $"策略四{method}固定冰冻前置不受自定义拉黑覆盖");
                 if (method != "sima.guarda") check(Pick(opening, method, bolt, ice) == "es_helada", $"策略四{method}尚未继承时寒冰优先");
                 check(Pick(ready, method, fire, bolt) == "fu_custom_damage", $"策略四{method}确认继承后按系列排序");
             }
             var transitions = pilot.CardChoices([fire, ice], "sima.guarda", opening);
-            check(transitions.Length == 2 && transitions.All(c => c.Reason.Contains("冰冻继承前过渡")), "策略四首次继承无普攻冰冻时择优继承其他遗物，正常继续");
+            check(transitions.Length == 1 && Cards.Family(transitions[0].Card) == "escarcha", "策略四首次继承无普攻冰冻时择优继承其他遗物，正常继续");
             var transitionNext = opening.DeepClone(); transitionNext["profundidad"] = 9; transitionNext["llegada"]!["reliquias"] = 1; transitionNext["reliquias"] = new JsonArray(ice.DeepClone());
             check(Cards.InheritanceError(opening, transitionNext, ice, cfg) == null && !CustomStrategy.Inherited(transitionNext, cfg), "策略四普通冰过渡通过继承核验，但不冒充冰冻核心");
-            check(Pick(transitionNext, "sima.reliquia", fire, core) == "es_carambano", "策略四过渡后下一层仍继续寻找普攻冰冻");
+            check(Pick(transitionNext, "sima.reliquia", fire, core) == "es_glaciar", "策略四过渡后下一层仍继续寻找普攻冰冻");
             var openingBefore = Signature(pilot.CardChoices([fire, ice], "sima.guarda", opening));
             cfg.CustomStrategy.Cards["es_helada"] = new() { Mode = "block" };
             cfg.CustomStrategy.Cards["br_custom_damage"] = new() { Mode = "avoid" };
-            check(Signature(pilot.CardChoices([fire, ice], "sima.guarda", opening)) == openingBefore && Pick(opening, "sima.reliquia", fire, ice) == "es_helada", "策略四继承确认前固定规则及过渡不受自定义拉黑软避让影响");
+            check(Signature(pilot.CardChoices([fire, ice], "sima.guarda", opening)) == openingBefore && Pick(badgeOnly, "sima.reliquia", fire, ice) == "es_helada", "策略四继承确认前固定规则及过渡不受自定义拉黑软避让影响");
             cfg.CustomStrategy.Cards.Remove("es_helada"); cfg.CustomStrategy.Cards.Remove("br_custom_damage");
-            check(pilot.CardChoices([fire], "sima.trade", opening).Length == 0, "策略四前置阶段商店无冰牌不花钱购买");
+            check(pilot.CardChoices([fire], "sima.trade", badgeOnly).Length == 0, "策略四前置阶段商店无冰牌不花钱购买");
             cfg.CustomStrategy.FamilyOrder = ["brasa", "fulgor", "ponzona", "umbra", "acero", "aurora", "escarcha"];
             check(Pick(ready, "sima.reliquia", bolt, fire) == "br_custom_damage", "策略四修改系列顺序立即改变自定义阶段选择");
             cfg.CustomStrategy.FamilyOrder = new CustomStrategySettings().FamilyOrder;

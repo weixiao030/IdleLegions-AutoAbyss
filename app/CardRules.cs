@@ -122,7 +122,7 @@ static class CardRules
         if (effect != BasicEffect.None && (effect & ~held) == BasicEffect.None && bounce == 0 && !HasSupplementalValue(card, cfg) && !CollectingFreeze(card, run, cfg))
             return "同类普攻独立效果已经持有，且无已识别的附带增益，优先不重复选择或继承";
         var id = card.At("id").S();
-        if (!CollectingFreeze(card, run, cfg) && id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
+        if (method == "sima.guarda" && !CollectingFreeze(card, run, cfg) && id != "" && (baseline.Count(c => c.At("id").S() == id) >= 3
             || method == "sima.guarda" && card.At("llevas").N() >= 3))
             return "同种牌已达三层继承上限，继续拿不会增加效果";
         return null;
@@ -160,7 +160,7 @@ static class CardRules
         if (effect.HasFlag(BasicEffect.Detonate) && held.HasFlag(BasicEffect.Detonate)
             || effect != BasicEffect.None && (effect & ~held) == BasicEffect.None && AllTargetEvery(card) == 0 && !HasSupplementalValue(card, cfg) && !CollectingFreeze(card, run, cfg)) penalty += 2500;
         var id = card.At("id").S();
-        if (!CollectingFreeze(card, run, cfg) && (baseline.Count(c => c.At("id").S() == id) >= 3 || method == "sima.guarda" && card.At("llevas").N() >= 3)) penalty += 3500;
+        if (method == "sima.guarda" && !CollectingFreeze(card, run, cfg) && (baseline.Count(c => c.At("id").S() == id) >= 3 || card.At("llevas").N() >= 3)) penalty += 3500;
         return penalty;
     }
 

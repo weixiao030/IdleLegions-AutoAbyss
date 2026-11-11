@@ -3,8 +3,9 @@ using System.Text.RegularExpressions;
 
 namespace FrostAbyss;
 
+sealed record CombatState(double[] Hp, double[] Mana);
 sealed record Forecast(double Win, double Low, double High, double Hp, double Score, int Trials,
-    double Frozen = 0, double Duration = 0, int KnownEnemies = 0, string[]? UnknownEffects = null);
+    double Frozen = 0, double Duration = 0, int KnownEnemies = 0, string[]? UnknownEffects = null, double[]? RemainingHp = null, CombatState? WinState = null, CombatState? LossState = null);
 sealed class Choice(string label, string method, JsonObject args, double benefit = 0, double risk = 0, bool core = false, int priority = 0, JsonNode? card = null)
 {
     public string Label { get; } = label;
@@ -17,6 +18,7 @@ sealed class Choice(string label, string method, JsonObject args, double benefit
     public JsonNode? Card { get; } = card;
     public string Reason { get; set; } = "";
     public Forecast? Forecast { get; set; }
+    public SearchEstimate? Search { get; set; }
 }
 
 // Hybrid event model. The server engine is unavailable. Only observed damage,
@@ -24,10 +26,22 @@ sealed class Choice(string label, string method, JsonObject args, double benefit
 sealed class Simulation
 {
     record Profile(string Key, string Kind, double Hp, double Dps, double Interval, double Aoe, int Row, int Depth);
-    record HeroProfile(double Hit, double Interval, double HealRate, double FireRate, double LightningRate);
-    record Skill(double Mult, double Cooldown, string Element, bool Aoe, string Focus, string Cond, double Value, double Cost);
+    record HeroProfile(double Hit, double Interval, double HealRate, double FireRate, double LightningRate, double AccountAttack = 0);
+    record Skill(double Mult, double Cooldown, string Element, bool Aoe, string Focus, string Cond, double Value, double Cost, bool Heal, bool Freezes);
     readonly object modelGate = new();
     readonly List<Profile> enemies = [];
+    readonly Dictionary<(string Key, string Kind, int Depth, int Row), (Profile[] Matching, Profile[] Pool, Profile[] Attacks)> profileCache = [];
+    (Profile[] Matching, Profile[] Pool, Profile[] Attacks) Profiles(string key, string kind, int depth, int row)
+    {
+        var cacheKey = (key, kind, depth, row);
+        if (profileCache.TryGetValue(cacheKey, out var cached)) return cached;
+        var matching = enemies.Where(p => p.Key == key).OrderBy(p => Math.Abs(p.Depth-depth)*8 + Math.Abs(p.Row-row)).Take(6).ToArray();
+        var pool = matching.Length > 0 ? matching : enemies.Where(p => p.Kind == kind).OrderBy(p => Math.Abs(p.Depth-depth)*8 + Math.Abs(p.Row-row)).Take(12).ToArray();
+        var attacks = pool.Where(p => p.Dps > 0).ToArray();
+        if (attacks.Length == 0) attacks = enemies.Where(p => p.Dps > 0 && p.Kind == kind).OrderBy(p => Math.Abs(p.Depth-depth)).Take(20).ToArray();
+        if (profileCache.Count > 4096) profileCache.Clear();
+        return profileCache[cacheKey] = (matching, pool, attacks);
+    }
     readonly Dictionary<string, HeroProfile> heroes = [];
     readonly HashSet<string> observed = [];
     public int Battles { get; private set; }
@@ -64,7 +78,7 @@ sealed class Simulation
         var ev = b.At("result", "events").A().OrderBy(x => x.At("t").N()).ToArray();
         var foe = b.At("vista", "enemigos").A().ToArray();
         if (ev.Length == 0 || foe.Length == 0) return;
-        observed.Add(id);
+        observed.Add(id); profileCache.Clear();
         if (persist) J.Write(Path.Combine(Paths.Data, "battles", id.Replace('.', '-') + ".json"), b);
         var before = b.At("before")!; var cfg = new Settings(); var fx = Effects.Parse(Cards.Current(before), cfg);
         double duration = Math.Max(1, b.At("result", "durationSec").N());
@@ -77,7 +91,9 @@ sealed class Simulation
             var basic = events.Where(e => e.At("dmg").N() > 0 && e.At("skill") == null && !e.At("tick").B() && e.At("rel") == null && !e.At("castOnly").B()).ToArray();
             if (basic.Length < 4) continue;
             // Remove critical, reaction and parsed relic multipliers before fitting.
-            var raw = basic.Select(e => e.At("dmg").N() / (e.At("crit").B() ? 2.5 : 1) /
+            var account = BattleContext.Hero(b.At("context"), h.At("id").S());
+            double criticalMultiplier = account.At("stats", "critdmg").N(250) / 100 + fx.CritDamage;
+            var raw = basic.Select(e => e.At("dmg").N() / (e.At("crit").B() ? Math.Max(1, criticalMultiplier) : 1) /
                 (e.At("reaction").S() == "vaporizacion" ? 2 : e.At("reaction").S() == "superconductor" ? 1.3 : 1) /
                 fx.Outgoing(e.At("est").A().Any(x => x.S() is "lento" or "congelado"), e.At("est").A().Any(), e.At("hpPct").N(100) / 100, kind is "elite" or "jefe"));
             var ts = basic.Select(e => e.At("t").N()).Distinct().Order().ToArray();
@@ -87,9 +103,10 @@ sealed class Simulation
             var next = new HeroProfile(Median(raw), Math.Clamp(gap * (1 + fx.Speed), .25, 2),
                 Math.Max(0, healing - outgoing * fx.Leech) / duration,
                 events.Count(e => e.At("reaction").S() == "vaporizacion") / duration,
-                events.Count(e => e.At("reaction").S().Contains("superconduc")) / duration);
+                events.Count(e => e.At("reaction").S().Contains("superconduc")) / duration,
+                Math.Max(account.At("stats", "atk").N(), account.At("stats", "pmag").N()));
             if (heroes.TryGetValue(h.At("id").S(), out var old))
-                next = next with { Hit = old.Hit * .7 + next.Hit * .3, Interval = old.Interval * .7 + next.Interval * .3, HealRate = old.HealRate * .7 + next.HealRate * .3 };
+                next = next with { Hit = (old.AccountAttack > 0 && next.AccountAttack > 0 ? old.Hit * next.AccountAttack / old.AccountAttack : old.Hit) * .7 + next.Hit * .3, Interval = old.Interval * .7 + next.Interval * .3, HealRate = old.HealRate * .7 + next.HealRate * .3 };
             heroes[h.At("id").S()] = next;
         }
         foreach (var e in foe)
@@ -125,10 +142,20 @@ sealed class Simulation
         Battles++;
     }
     static double Number(string desc) => Regex.Match(desc, @"([0-9]+(?:[.,][0-9]+)?)%").Value.TrimEnd('%').Replace(',', '.') is { } v && double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n / 100 : 1;
-    static Skill[] Skills(JsonNode? h) => h.At("skills").A().Where(k => k.At("equipped").B() && k.At("damages").B()).Select(k =>
+    internal static bool DamagingSkill(JsonNode k)
+    {
+        if (k.At("damages") is JsonValue flag && flag.TryGetValue<bool>(out var explicitValue)) return explicitValue;
+        string target = k.At("target").S();
+        if (target.StartsWith("ally") || target.StartsWith("self")) return false;
+        return (target.StartsWith("enemy") || target == "all_enemies")
+            && Regex.IsMatch(Effects.Normalize(k.At("desc").S()).ToLowerInvariant(), @"dano|damage|伤害");
+    }
+    internal static bool HealingSkill(JsonNode k) => !k.At("damages").B() && k.At("target").S().StartsWith("ally")
+        && Regex.IsMatch(Effects.Normalize(k.At("desc").S()).ToLowerInvariant(), @"cura|vida|heal");
+    static Skill[] Skills(JsonNode? h) => h.At("skills").A().Where(k => k.At("equipped").B() && (DamagingSkill(k) || HealingSkill(k))).Select(k =>
         new Skill(Math.Clamp(Number(k.At("desc").S()), .1, 20), Math.Max(2, k.At("cooldown").N(10)), k.At("element").S("physical"),
-            k.At("desc").S().Contains("TODOS") || k.At("target").S().Contains("all"), k.At("rule", "focus").S(), k.At("rule", "cond").S("always"), k.At("rule", "value").N(), k.At("animaCoste").N())).ToArray();
-    internal static double SharpenPotential(JsonNode? hero) => Skills(hero).Sum(k => k.Mult * (k.Aoe ? 2 : 1) / k.Cooldown);
+            k.At("desc").S().Contains("TODOS") || k.At("target").S().Contains("all"), k.At("rule", "focus").S(), k.At("rule", "cond").S("always"), k.At("rule", "value").N(), k.At("animaCoste").N(), HealingSkill(k), Regex.IsMatch(k.At("desc").S().ToLowerInvariant(), @"congela|freeze|冻结|冰冻"))).ToArray();
+    internal static double SharpenPotential(JsonNode? hero) => Skills(hero).Where(k => !k.Heal).Sum(k => k.Mult * (k.Aoe ? 2 : 1) / k.Cooldown);
     public void Evaluate(Choice[] choices, JsonNode s, Settings cfg, CancellationToken ct)
     {
         // Zero/negative trials explicitly disable sampling, never invent a win
@@ -152,7 +179,8 @@ sealed class Simulation
         var names = members.Select(h => h.At("nombre").S(h.At("name").S())).ToArray();
         var skills = live.Select(Skills).ToArray();
         var statAtk = live.Select(h => Math.Max(h.At("stats", "atk").N(1000), h.At("stats", "pmag").N())).ToArray();
-        var hit = members.Select((h,i) => heroes.GetValueOrDefault(h.At("id").S())?.Hit ?? statAtk[i] * .6).ToArray();
+        var hit = members.Select((h,i) => heroes.GetValueOrDefault(h.At("id").S()) is { } p
+            ? p.Hit * (p.AccountAttack > 0 ? statAtk[i] / p.AccountAttack : 1) : statAtk[i] * .6).ToArray();
         var interval = members.Select((h,i) => heroes.GetValueOrDefault(h.At("id").S())?.Interval ?? 1 / Math.Max(.4, live[i].At("stats", "spd").N(1))).ToArray();
         var healRate = members.Select(h => heroes.GetValueOrDefault(h.At("id").S())?.HealRate ?? 0).ToArray();
         var current = Effects.Parse(Cards.Current(run), cfg);
@@ -208,16 +236,14 @@ sealed class Simulation
             for (int e = 0; e < m; e++)
             {
                 var f = e < foes.Length ? foes[e] : null; var key = Key(f);
-                var matching = enemies.Where(p => p.Key == key).OrderBy(p => Math.Abs(p.Depth-scenarioDepth)*8 + Math.Abs(p.Row-row)).Take(6).ToArray();
+                var (matching, pool, attacks) = Profiles(key, kind, scenarioDepth, row);
                 if (matching.Length > 0) known++;
-                var pool = matching.Length > 0 ? matching : enemies.Where(p => p.Kind == kind).OrderBy(p => Math.Abs(p.Depth-scenarioDepth)*8 + Math.Abs(p.Row-row)).Take(12).ToArray();
                 double Scale(Profile p) => Math.Pow(1.06, row-p.Row) * Math.Pow(1.23, scenarioDepth-p.Depth) * cfg.EnemyStrength;
                 double mult = kind == "jefe" ? 7 : kind == "elite" ? 2 : 1;
                 eHp[e] = Median(pool.Select(p => p.Hp * Scale(p)), hit.Sum()*18*mult);
-                var attacks = pool.Where(p => p.Dps > 0).ToArray();
+                // Cached pools are invalidated by every newly observed battle.
                 // If frozen samples contain no attacks, use other observed enemies
                 // at this depth as a broad uncertain prior, not a hardcoded 15 DPS.
-                if (attacks.Length == 0) attacks = enemies.Where(p => p.Dps > 0 && p.Kind == kind).OrderBy(p => Math.Abs(p.Depth-scenarioDepth)).Take(20).ToArray();
                 eDps[e] = Median(attacks.Select(p => p.Dps * Scale(p)), maxHp.Sum()*.04*mult);
                 eInterval[e] = Math.Clamp(Median(attacks.Select(p => p.Interval), 1), .4, 3);
                 aoe[e] = Median(attacks.Select(p => p.Aoe), .1);
@@ -229,10 +255,14 @@ sealed class Simulation
             bool iceSearch = !current.Freeze && c.Card != null && Cards.Family(c.Card) == "escarcha";
             bool conflictAllowed = CardRules.BoostDetonator(fx, cfg);
             var sharp = sharpen.Select((value,i) => value + (rest && restOption == "afilar" && restHero == heroIds[i] ? 1 : 0)).ToArray();
-            var unknown = fx.Unknown.Distinct().ToArray();
+            var unknown = fx.Unknown.Concat(fx.CleavePeriods.Count > 1 ? new[] { "多个弹跳周期按触发并集近似，独立伤害叠加待服务端验证" } : [])
+                .Concat(run.At("pacto", "sellado").B() ? new[] { "已签契约的独立影响尚未完整建模，经验敌人样本可能混合契约状态" } : []).Distinct().ToArray();
+            var bouncePeriods = fx.CleavePeriods.ToArray(); var criticalPeriods = fx.CriticalPeriods.ToArray();
             work.Add(() =>
             {
             var rng = new Random(seed); int wins = 0; double rem = 0, frozenSum = 0, totalTime = 0;
+            var remaining = new double[n]; CombatState? winState = null, lossState = null;
+            var projectedMax = maxHp.Select(v => v * (1 + fx.Life) / (1 + current.Life)).ToArray();
             var hp = new double[n]; var immune = new double[n]; var shield = new double[n]; var eh = new double[m]; var frozenTo = new double[m]; var slowTo = new double[m]; var statusTo = new double[m]; var debuffTo = new double[m]; var tauntTo = new double[m]; var tauntBy = new int[m];
             var marks = new int[m]; var markTo = new double[m];
             var next = new double[n]; var enext = new double[m]; var attackCount = new int[n]; var received = new int[n]; var mana = new double[n];
@@ -244,7 +274,7 @@ sealed class Simulation
                 double freezeSecs = freezeDuration * (.65+rng.NextDouble()*.7); // Unidentified server duration, exposed to sensitivity.
                 for (int h=0;h<n;h++)
                 {
-                    immune[h]=0; hp[h]=startHp[h]*(1+fx.Life)/(1+current.Life); shield[h]=maxHp[h]*fx.Shield;
+                    immune[h]=0; hp[h]=startHp[h]*(1+fx.Life)/(1+current.Life); shield[h]=projectedMax[h]*fx.Shield;
                     if (rest && restOption == "reposar") hp[h]=Math.Min(maxHp[h],hp[h]+maxHp[h]*healPct);
                     next[h]=.12+h*.05+rng.NextDouble()*.12; attackCount[h]=received[h]=0; mana[h]=baseMana[h];
                     if (rest && restOption == "meditar") mana[h]=Math.Min(100,mana[h]+60);
@@ -252,12 +282,23 @@ sealed class Simulation
                 }
                 for(int e=0;e<m;e++) { marks[e]=0; markTo[e]=0; eh[e]=eHp[e]*strength; frozenTo[e]=slowTo[e]=statusTo[e]=debuffTo[e]=tauntTo[e]=0; enext[e]=.5+rng.NextDouble()*eInterval[e]; }
                 double now=0, freezeTime=0; bool win=false;
-                for(int turn=0;turn<1800;turn++)
+                for(int turn=0;turn<20000;turn++)
                 {
-                    double at=90; int who=-1; bool enemy=false;
-                    for(int h=0;h<n;h++) if(hp[h]>0 && next[h]<at) { at=next[h]; who=h; enemy=false; }
-                    for(int e=0;e<m;e++) if(eh[e]>0 && enext[e]<at) { at=enext[e]; who=e; enemy=true; }
-                    if(who<0||at>=90) break;
+                    double at=180.2; int who=-1, selectedSkill=-1; bool enemy=false;
+                    for(int h=0;h<n;h++) if(hp[h]>0)
+                    {
+                        if(next[h]<at) { at=next[h]; who=h; enemy=false; selectedSkill=-1; }
+                        for(int k=0;k<skills[h].Length;k++)
+                        {
+                            // A cooled-down skill can wait for mana. Once mana
+                            // arrives it becomes ready now, never in the past.
+                            double ready=Math.Max(now,skillNext[h][k]);
+                            if(mana[h]>=skills[h][k].Cost && ready<at)
+                            { at=ready; who=h; enemy=false; selectedSkill=k; }
+                        }
+                    }
+                    for(int e=0;e<m;e++) if(eh[e]>0 && enext[e]<at) { at=enext[e]; who=e; enemy=true; selectedSkill=-1; }
+                    if(who<0||at>=180.2) break;
                     int aliveE=0,fz=0;for(int e=0;e<m;e++)if(eh[e]>0){aliveE++;if(frozenTo[e]>now)fz++;}
                     freezeTime+=(at-now)*(aliveE==0?0:fz/(double)aliveE); now=at;
                     if(enemy)
@@ -284,23 +325,32 @@ sealed class Simulation
                     if(target<0||target>=m||eh[target]<=0){target=-1;for(int e=0;e<m;e++)if(eh[e]>0&&(target<0||eh[e]<eh[target]))target=e;}
                     if(target<0){win=true;break;}
                     Skill? skill=null;
-                    for(int k=0;k<skills[hero].Length;k++)
+                    if(selectedSkill>=0)
                     {
-                        var sk=skills[hero][k];if(skillNext[hero][k]>now||mana[hero]<sk.Cost)continue;
+                        var sk=skills[hero][selectedSkill];
                         bool condition=sk.Cond switch { "self_below"=>hp[hero]/maxHp[hero]*100<sk.Value,"enemies_at_least"=>aliveE>=sk.Value,"target_hp"=>sk.Value>=0?eh[target]/eHp[target]*100>sk.Value:eh[target]/eHp[target]*100 < -sk.Value,"target_status"=>sk.Value==2?frozenTo[target]>now:statusTo[target]>now,"enemy_casting"=>false,_=>true };
-                        if(!condition)continue;skill=sk;skillNext[hero][k]=now+sk.Cooldown;mana[hero]-=sk.Cost;break;
+                        if(!condition) { skillNext[hero][selectedSkill]=now+.25; continue; }
+                        skill=sk;skillNext[hero][selectedSkill]=now+sk.Cooldown;mana[hero]-=sk.Cost;
                     }
                     if(skill?.Focus=="front")target=Array.FindIndex(eh,v=>v>0);
                     else if(skill?.Focus=="back"){for(int e=m-1;e>=0;e--)if(eh[e]>0){target=e;break;}}
                     bool basic=skill==null; if(basic){attackCount[hero]++;mana[hero]=Math.Min(100,mana[hero]+10);}
-                    bool cleave=basic&&fx.Cleave>0&&attackCount[hero]%fx.Cleave==0 || skill?.Aoe==true;
+                    if (skill?.Heal == true)
+                    {
+                        int lowest = -1;
+                        for (int h=0;h<n;h++) if (hp[h]>0 && (lowest<0 || hp[h]/projectedMax[h]<hp[lowest]/projectedMax[lowest])) lowest=h;
+                        for (int h=0;h<n;h++) if (hp[h]>0 && (skill.Aoe || h==lowest)) hp[h]=Math.Min(projectedMax[h], hp[h]+projectedMax[h]*skill.Mult);
+                        continue;
+                    }
+                    bool cleave=basic&&bouncePeriods.Any(period=>attackCount[hero]%period==0) || skill?.Aoe==true;
                     string element=skill?.Element??"physical";
                     if(basic&&fx.Burn)element="fire";else if(basic&&fx.Lightning)element="lightning";
                     for(int e=0;e<m;e++)
                     {
                         if(eh[e]<=0 || !cleave&&e!=target)continue;
                         double critChance=Math.Clamp(critBase[hero]+fx.Crit,0,1);
-                        double crit=rng.NextDouble()<critChance?Math.Max(1,critDamage[hero]+fx.CritDamage):1;
+                        bool guaranteedCrit = basic && criticalPeriods.Any(period => attackCount[hero] % period == 0);
+                        double crit=guaranteedCrit || rng.NextDouble()<critChance?Math.Max(1,critDamage[hero]+fx.CritDamage):1;
                         // The client describes Afilar as +8% skill damage per stack.
                         double d=hit[hero]*(skill==null?1:skill.Mult*(1+.08*sharp[hero]))*crit*fx.Outgoing(slowTo[e]>now||frozenTo[e]>now,statusTo[e]>now||frozenTo[e]>now,eh[e]/Math.Max(1,eHp[e]*strength),kind is "elite" or "jefe")*(.9+rng.NextDouble()*.2);
                         if(debuffTo[e]>now)d*=1.4;
@@ -313,17 +363,20 @@ sealed class Simulation
                         if(frozenTo[e]>now && (element=="fire" || element=="lightning" && consumeFreeze)) {d*=(element=="fire"?2:1.3)*(1+fx.ReactionDamage);frozenTo[e]=0;if(element=="lightning")debuffTo[e]=now+6;}
                         if(basic && fx.ConsumesStatus) { frozenTo[e]=0; statusTo[e]=0; slowTo[e]=0; }
                         eh[e]-=d;hp[hero]=Math.Min(maxHp[hero]*(1+fx.Life)/(1+current.Life),hp[hero]+d*fx.Leech+healRate[hero]*interval[hero]/(1+fx.Speed));
-                        if(basic&&fx.Freeze||element=="ice")frozenTo[e]=Math.Max(frozenTo[e],now+freezeSecs);
+                        if(basic&&fx.Freeze||skill?.Freezes==true)frozenTo[e]=Math.Max(frozenTo[e],now+freezeSecs);
                         if(basic && fx.Mark>0) { marks[e]=Math.Min(Math.Max(1,fx.MarkCap),markTo[e]>now?marks[e]+1:1); markTo[e]=now+10; }
                         if(fx.Slow>0)slowTo[e]=now+Math.Max(2,fx.SlowSeconds);
                         if(fx.Poison||element is "fire" or "poison" or "holy" or "shadow")statusTo[e]=now+4;
                         if(fx.Taunt&&basic){tauntBy[e]=hero;tauntTo[e]=now+2;}
-                        if(eh[e]<=0){hp[hero]=Math.Min(maxHp[hero],hp[hero]+fx.KillHeal*maxHp[hero]);immune[hero]=now+fx.KillImmune;}
+                        if(eh[e]<=0){hp[hero]=Math.Min(projectedMax[hero],hp[hero]+fx.KillHeal*projectedMax[hero]);immune[hero]=now+fx.KillImmune;}
                     }
-                    next[hero]=now+interval[hero]/(1+fx.Speed);
+                    if(basic) next[hero]=now+interval[hero]/(1+fx.Speed);
                     if(eh.All(v=>v<=0)){win=true;break;}
                 }
-                if(win)wins++;rem+=hp.Sum(x=>Math.Max(0,x))/Math.Max(1,maxHp.Sum()*(1+fx.Life)/(1+current.Life));
+                var outcomeState = new CombatState(hp.Select(v => Math.Max(0,v)).ToArray(), mana.ToArray());
+                if (win) winState = outcomeState; else lossState = outcomeState;
+                if(win)wins++;rem+=hp.Sum(x=>Math.Max(0,x))/Math.Max(1,projectedMax.Sum());
+                for (int h=0;h<n;h++) remaining[h]+=Math.Max(0,hp[h])/trials;
                 frozenSum+=freezeTime/Math.Max(.1,now);totalTime+=now;
             }
             double p=wins/(double)trials,z=1.96,denom=1+z*z/trials;
@@ -331,8 +384,8 @@ sealed class Simulation
             double avg=rem/trials,coverage=frozenSum/trials;
             double searchBonus=iceSearch?freezeWeight:0;
             double conflict=avoidConflict&&fx.ConsumesStatus&&!conflictAllowed?freezeWeight*(1-coverage):0;
-            c.Forecast=new(p,Math.Max(0,center-margin),Math.Min(1,center+margin),avg,
-                p*100+avg*riskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/trials))+coverage*freezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,trials,coverage,totalTime/trials,known,unknown);
+            c.Forecast=new(p,Math.Min(p,Math.Max(0,center-margin)),Math.Max(p,Math.Min(1,center+margin)),avg,
+                p*100+avg*riskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/trials))+coverage*freezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,trials,coverage,totalTime/trials,known,unknown,remaining,winState,lossState);
             });
         }
         }

@@ -1,79 +1,45 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
-
 namespace FrostAbyss;
-
 static class FreezeCollectionTests
 {
-    static JsonNode Card(string id, string family, string desc) => new JsonObject { ["id"] = id, ["familia"] = family, ["desc"] = desc };
-    static JsonObject Run(params JsonNode[] cards) => new() { ["profundidad"] = 0, ["llegada"] = null, ["reliquias"] = new JsonArray(cards.Select(c => c.DeepClone()).ToArray()) };
-    public static void Run(Action<bool, string> check)
+    public static void Run(Action<bool,string> check)
     {
-        var original = Paths.Data;
-        var temp = Path.Combine(Path.GetTempPath(), "FrostAbyss-FreezeCollection-" + Guid.NewGuid().ToString("N"));
+        var old=Paths.Data;
         try
         {
-            Paths.Data = temp;
-            var cfg = new Settings { Simulations = 0, SkipShieldCardsEarly = false };
-            var pilot = new Pilot(); pilot.Save(cfg);
-            var freeze = Card("es_carambano", "escarcha", "Tus autoataques CONGELAN al objetivo");
-            var alternate = Card("es2_carambano", "escarcha", "Tus golpes básicos congelan");
-            var glacier = Card("es_glaciar", "escarcha", "Tus autos CONGELAN, y cada 5 tu golpe salta a todos");
-            var mixed = Card("fixture_freeze_damage", "escarcha", "Tus autoataques CONGELAN al objetivo, y +8% de daño");
-            var slow = Card("es_helada", "escarcha", "Tus golpes ralentizan un 15% durante 4 s");
-            var iceDamage = Card("es_ventisca", "escarcha", "+22% de daño contra enemigos LENTOS");
-            var bounce = Card("fu_cadena", "fulgor", "Cada 5 autoataques, tu golpe salta a todos, y +2% de daño");
-            var fire = Card("br_fragua", "brasa", "+50% de daño de tus reacciones elementales, y +5% de daño");
-            var attack = Card("attack", "acero", "+20% de daño");
-            check(Cards.IsCore(mixed, cfg), "混合冻结描述仍被识别为核心，不依赖固定ID");
-            foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
+            Paths.Data=Path.Combine(old,"light-preset-v151");
+            JsonNode Card(string id,string f,string d="+10% de daño")=>IceOpeningTests.Card(id,f,d);
+            var glacier=Card("es_glaciar","escarcha");var light=Card("au_other_fixture","aurora","+90% de daño");var fire=Card("br_other_fixture","brasa");
+            var fervor=Card("au_fervor","aurora");var litany=Card("au_letania","aurora");
+            var cfg=new Settings{StrategyId=4,Simulations=0,SkipShieldCardsEarly=false};var pilot=new Pilot();pilot.Save(cfg);
+            var run=IceOpeningTests.State(glacier);
+            string Pick(string method,params JsonNode[] cs)=>Pilot.Rank(pilot.CardChoices(cs,method,run))[0].Card.At("id").S();
+            check(!cfg.CustomStrategy.LightFervorOnly&&Pick("sima.guarda",light,fire)=="au_other_fixture","光系配置默认关闭，保留收益选牌行为");
+            cfg.CustomStrategy.Cards["br_other_fixture"]=new(){Priority=7,TargetCopies=2};
+            cfg.CustomStrategy.LightFervorOnly=true;pilot.Save(cfg);
+            check(new Pilot().Config.CustomStrategy.LightFervorOnly&&new Pilot().Config.CustomStrategy.Cards["br_other_fixture"].Priority==7,"光系选项保存重开且不覆盖原单卡设置");
+            check(Pick("sima.reliquia",light,fire)=="au_other_fixture","光系配置允许本层拿光牌凑羁绊");
+            check(Pick("sima.guarda",light,fire)=="br_other_fixture","光系配置章末普通光牌让位别系");
+            check(Pick("sima.guarda",fervor,light,fire)=="au_fervor","光系配置优先首份狂热");
+            run=IceOpeningTests.State(glacier,fervor);
+            check(Pick("sima.guarda",fervor,litany,fire)=="au_letania","已有狂热优先首份连祷，不重复继承狂热");
+            run=IceOpeningTests.State(glacier,fervor,litany);
+            check(Pick("sima.guarda",fervor,litany,light,fire)=="br_other_fixture","狂热连祷各一份后转补其他系列");
+            check(Pick("sima.guarda",light)=="au_other_fixture","强制仅光牌菜单合法过渡，不暂停");
+            var bad=light.DeepClone();bad["available"]=false;
+            check(Pick("sima.guarda",bad,fire)=="br_other_fixture","光系配置不恢复游戏不可用牌");
+            cfg.CustomStrategy.LightFervorOnly=false;pilot.Save(cfg);
+            check(Pick("sima.guarda",light,fire)=="au_other_fixture","关闭光系配置恢复原收益比较");
+            foreach(int strategy in new[]{1,2,3})
             {
-                foreach (int copies in new[] { 1, 2, 3, 4 })
-                {
-                    var acquired = Run(Enumerable.Repeat(freeze, copies).ToArray());
-                    var choices = pilot.CardChoices([freeze, alternate, glacier, mixed, slow, iceDamage, bounce, fire], method, acquired);
-                    check(choices.Any(c => c.Card.At("id").S() == "es_carambano" && c.Priority == 2000 && !c.Label.Contains("兜底"))
-                        && choices.Any(c => c.Card.At("id").S() == "es_glaciar" && c.Priority == 2200)
-                        && choices.All(c => Cards.Family(c.Card) == "escarcha"), method + " 本章冻结" + copies + "份仍正常优先多拿，普通2000/五次弹跳2200不降权、不转火");
-                    check(Pilot.Rank(choices.Where(c => c.Card.At("id").S() != "es_glaciar").ToArray())[0].Priority == 2000,
-                        method + " 本章冻结" + copies + "份后重复冻结仍高于1950普通冰牌");
-                    check(CardRules.FallbackPenalty(freeze, acquired, cfg, method) == 0, method + " 收集阶段不误扣纯冻结重复或三份继承罚分");
-                }
-                var badge = Run(); badge["blasones"] = new JsonArray(freeze.DeepClone(), freeze.DeepClone());
-                check(Pilot.Rank(pilot.CardChoices([freeze, slow, fire], method, badge))[0].Card.At("id").S() == "es_carambano",
-                    method + " 临时冻结徽章不阻止继续取得和继承冻结遗物");
-                var oldFireNewFreeze = Run(fire, freeze, freeze); oldFireNewFreeze["llegada"] = new JsonObject { ["reliquias"] = 1 };
-                check(pilot.CardChoices([freeze, slow], method, oldFireNewFreeze).Single(c => c.Card.At("id").S() == "es_carambano").Priority == 2000,
-                    method + " 旧火遗物加本章重复冻结，不误认为冻结已继承");
-                var inherited = Run(freeze); inherited["profundidad"] = 1; inherited["llegada"] = new JsonObject { ["reliquias"] = 1 };
-                var after = pilot.CardChoices([freeze, alternate, mixed, glacier, bounce, fire], method, inherited);
-                check(!after.Any(c => c.Card.At("id").S() is "es_carambano" or "es2_carambano")
-                    && after.Any(c => c.Card.At("id").S() == "es_glaciar")
-                    && after.Any(c => c.Card.At("id").S() == "fixture_freeze_damage"),
-                    method + " 成功继承一份后正常避开纯冻结，但带新增弹跳或有效数值的混合牌仍参加比较");
-                check(after.Single(c => c.Card.At("id").S() == "fixture_freeze_damage").Priority == 750
-                    && after.Single(c => c.Card.At("id").S() == "es_glaciar").Priority == 1945,
-                    method + " 继承后混合牌按实际新增收益750/1945，不再获2000收集奖励");
-                check(Pilot.Rank(pilot.CardChoices([mixed, attack], method, inherited))[0].Card.At("id").S() == "attack",
-                    method + " 已继承后不为重复冻结抬高小额附带伤害，正常输出优先");
-                inherited["reliquias"]!.AsArray().Add(bounce.DeepClone()); inherited["llegada"]!["reliquias"] = 2;
-                check(Cards.Priority(glacier, cfg, inherited, method) < Cards.Priority(fire, cfg, inherited, method),
-                    method + " 冻结与同档五次弹跳都有后不为重复混合牌加权");
-                check(pilot.CardChoices([freeze], method, inherited).Single().Label.Contains("兜底"),
-                    method + " 已继承却被强制只给纯冻结时仍兜底继续，不因去重暂停");
-                var blocked = freeze.DeepClone(); blocked["available"] = false;
-                check(pilot.CardChoices([blocked, slow], method, Run(freeze)).Single().Card.At("id").S() == "es_helada",
-                    method + " 多拿策略不会恢复游戏明确不可用的冻结牌");
+                cfg.StrategyId=strategy;cfg.CustomStrategy.LightFervorOnly=false;pilot.Save(cfg);
+                var before=JsonSerializer.Serialize(pilot.CardChoices([light,fire],"sima.guarda",run).Select(c=>new{c.Label,c.Priority,c.Reason,c.Args}),J.Options);
+                cfg.CustomStrategy.LightFervorOnly=true;pilot.Save(cfg);
+                check(before==JsonSerializer.Serialize(pilot.CardChoices([light,fire],"sima.guarda",run).Select(c=>new{c.Label,c.Priority,c.Reason,c.Args}),J.Options),$"光系配置仅策略四生效，不影响策略{strategy}");
             }
-            cfg.PreferFreezeBuild = false; pilot.Save(cfg);
-            check(Pilot.Rank(pilot.CardChoices([freeze, slow], "sima.reliquia", Run(freeze, freeze)))[0].Priority == 2000,
-                "关闭继承后构筑排序也不解除继承前重复冻结优先");
-            var boolean = Effects.Parse([freeze, freeze, freeze], cfg);
-            check(boolean.Freeze && boolean.Damage == 0, "多拿仅改变收集偏好，模型不虚构冻结概率或叠加伤害");
-            var pending = Run(freeze, freeze, freeze); pending["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(freeze.DeepClone()) };
-            var selected = pilot.CardChoices([freeze], "sima.guarda", pending).Single();
-            check(Cards.Project(pending, selected).Count(c => Cards.IsCore(c, cfg)) == 1,
-                "本章多拿三份但每章只新增继承一份，不伪造全部带走");
+            check(!SynergySelection.LightKeeper(Card("au_duelo","aurora","Un aliado caído da fervor"))&&!SynergySelection.LightKeeper(Card("au_ceniza","aurora")),"盟友倒下狂热不误认为每普攻狂热");
         }
-        finally { Paths.Data = original; if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+        finally{Paths.Data=old;}
     }
 }

@@ -4,7 +4,7 @@ namespace FrostAbyss;
 
 static class IceStrategyRules
 {
-    internal const int SeriesTarget = 8;
+    internal const int SeriesTarget = SynergySelection.Target;
     internal static readonly string[] Families = ["escarcha", "brasa", "fulgor", "ponzona", "umbra", "aurora", "acero"];
     static readonly Dictionary<string, string> Names = new(StringComparer.Ordinal)
     {
@@ -15,9 +15,12 @@ static class IceStrategyRules
     internal static string Name(int id) => id switch
     {
         1 => "策略一 · 当前默认",
-        2 => "策略二 · 1.3.1 原版",
+        2 => "策略二 · 经典修正版",
         3 => "策略三 · ICE 后期",
-        4 => "策略四 · 自定义优先级",
+        4 => "策略四 · 收益比较 / 自定义",
+        5 => "策略五 · 纯 MCTS",
+        6 => "策略六 · 实战自校准 MCTS",
+        7 => "策略七 · 神经网络 + PUCT",
         _ => "未知策略"
     };
 
@@ -108,7 +111,10 @@ static class IceStrategyRules
     internal static string Description(int strategy) => strategy switch
     {
         4 => CustomStrategy.Description,
-        2 => "使用 v1.3.1 原始选牌、商店判断、目标组合及模拟器；独立于策略一和 ICE 的新增偏好。",
+        2 => "保留经典战斗模型，修正继承识别与重复抓冰牌偏置。",
+        5 => "纯UCT蒙特卡洛树搜索：随机前推与回传，不使用系列优先级或神经网络。",
+        6 => "UCT搜索结合全部实战校准，自动记录并修正战斗估计；极度吃CPU，建议16核/32线程、32GB内存、SSD，GPU不参与计算。",
+        7 => "小型策略价值网络 + PUCT；全部策略记录实战，按整次下井划分训练验证；验证改善才更新模型，冷启动使用UCT。",
         3 => "普攻冻结确认继承前优先冰系；继承后依次补齐每4/5/6次全体弹跳与每8/10次必暴击。七个系列各凑8张遗物，徽章及商店赐福不计数；先补缺失的指定效果，每类已有一张后回到系列补齐。本系已满8张的指定效果让位给未满系列，缺失弹跳与必暴击仍必拿。暗影低血增伤优先、标记加深次选；瘴气40%状态增伤、腐肉、火反应增伤、火状态增伤、坏疽、先锋、麻痹按效果比较。同种遗物可在本层继续获取，跨层继承仍最多3张；同系同效果优先补未持有牌；商店及徽章按当前效果选择。菜单左右换位不影响排序。",
         _ => "普攻冻结确认继承前优先冰系（含减速），本章冻结及临时徽章不能替代继承；确认继承后依次补新增或更快全体弹跳、独立普攻各一份、引爆器一份、火增伤与其他输出，优先避开冰减速，防御少量补充。无合适候选时择优兜底。"
     };
@@ -133,7 +139,7 @@ static class IceStrategyRules
             name = FamilyName(f),
             count = CountFamily(cards, f),
             inheritedCount = known ? (int?)CountFamily(inherited, f) : null,
-            target = cfg.StrategyId == 3 ? SeriesTarget : 0
+            target = SynergySelection.Uses(cfg) ? SeriesTarget : 0
         }).ToArray();
     }
 

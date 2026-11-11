@@ -13,7 +13,7 @@
     <Product>IdleLegions自动下井</Product>
     <Title>IdleLegions自动下井</Title>
     <Description>免费开源的 IdleLegions 自动下井工具</Description>
-    <Version>1.4.1</Version>
+    <Version>1.5.1</Version>
     <ApplicationIcon>Assets/app.ico</ApplicationIcon>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>

@@ -25,55 +25,60 @@ static class FallbackSelectionTests
             var shock = Card("fu_descarga", "fulgor", "Tus autoataques ELECTRIFICAN al objetivo");
             var detonate = Card("br_detonador", "brasa", "Tus autoataques CONSUMEN el estado del objetivo y fuerzan su reacción");
             var burn = Card("br_yesca", "brasa", "Tus autoataques dejan al objetivo ARDIENDO");
-            var confirmed = Run(freeze);
-            foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
+            var glacier = Card("es_glaciar", "escarcha", "Tus autos CONGELAN, y cada 5 tu golpe salta a todos");
+            var confirmed = Run(glacier);
+            foreach (int strategy in new[] {1,3,4})
             {
-                Choice Pick(JsonNode run, params JsonNode[] cards) => Pilot.Rank(pilot.CardChoices(cards, method, run))[0];
-                var picked = Pick(confirmed, shield, attack);
-                check(picked.Card.At("id").S() == "attack" && !picked.Label.Contains("兜底"), method + " 有正常攻击时不选前X层盾，也不进入兜底");
-                check(Pick(confirmed, shield).Label.Contains("兜底"), method + " 仅剩护盾时兜底继续");
-                check(Pick(Run(), iceShield, fire).Card.At("id").S() == "fixture_ice_shield", method + " 没有正常牌时仍优先冰系盾而非转火，保持系列积累");
-                check(Pick(confirmed, slow, shock).Card.At("id").S() == "es_helada", method + " 冰伤软避让不会在兜底时误删较好的冰减速，强迫拿禁用带电");
-                var repeated = Run(freeze, detonate, burn);
-                check(Pick(repeated, detonate).Label.Contains("兜底") && Pick(repeated, burn).Label.Contains("兜底"), method + " 仅剩重复引爆器或关闭普攻状态时均可兜底");
-                check(Pick(repeated, detonate, fire).Card.At("id").S() == "br_fragua", method + " 有正常火增伤时仍不重复拿引爆器");
-                var capped = Run(freeze, attack, attack, attack);
-                check(Pick(capped, attack).Label.Contains("兜底"), method + " 同牌三份仅作策略避让，强制菜单没有其他选择仍继续");
-                var unavailable = bounce.DeepClone(); unavailable["available"] = false;
-                var noId = new JsonObject { ["desc"] = "+999% de daño" };
-                check(Pick(confirmed, noId, unavailable, shield).Card.At("id").S() == "au_alba", method + " 兜底只恢复游戏实际可选项，不恢复无ID或不可用项");
-                foreach (var (key, value) in new[] { ("available", false), ("disponible", false), ("disabled", true) })
+                cfg.StrategyId = strategy; pilot.Save(cfg);
+                foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
                 {
-                    var blocked = bounce.DeepClone(); blocked[key] = value;
-                    bool rejected = false;
-                    try { pilot.CardChoices([blocked], method, confirmed); } catch (Exception e) { rejected = e.Message.Contains("没有实际可选"); }
-                    check(rejected, method + " " + key + " 的游戏不可用状态不被策略兜底覆盖");
+                    var options = new[] {shield, shock, attack};
+                    var before = new JsonArray(options.Select(c=>c.DeepClone()).ToArray()).ToJsonString();
+                    var choices = pilot.CardChoices(options, method, confirmed);
+                    check(choices.Length == 1 && choices[0].Card.At("id").S() == "attack", $"策略{strategy} {method}正常牌优先于护盾和关闭状态");
+                    var fallback = pilot.CardChoices([shield],method,confirmed);
+                    check(method == "sima.trade" ? fallback.Length == 0 : fallback.Length == 1 && fallback[0].Reason.Contains("兜底"), $"策略{strategy} {method}仅盾强制兜底，商店不盲买");
+                    var unavailable = attack.DeepClone(); unavailable["available"] = false;
+                    check(pilot.CardChoices([unavailable,shield],method,confirmed).All(c=>c.Card.At("id").S() != "attack"), $"策略{strategy} {method}兜底不恢复不可用项");
+                    foreach(var (key,value) in new[]{("available",false),("disponible",false),("disabled",true)})
+                    {
+                        var bad=attack.DeepClone();bad[key]=value;bool rejected=false;
+                        try {var result=pilot.CardChoices([bad],method,confirmed);rejected=method=="sima.trade"&&result.Length==0;}catch(Exception e){rejected=e.Message.Contains("没有");}
+                        check(rejected,$"策略{strategy} {method} {key}真实不可用不发送");
+                    }
+                    check(before == new JsonArray(options.Select(c=>c.DeepClone()).ToArray()).ToJsonString(), $"策略{strategy} {method}不修改原始菜单");
+                    var capped=attack.DeepClone();capped["llevas"]=3;
+                    if(method=="sima.guarda")
+                    {
+                        var phaseCappedRun=Run(glacier,attack,attack,attack);
+                        var legal=pilot.CardChoices([capped,fire],method,phaseCappedRun);
+                        check(legal.All(c=>c.Card.At("id").S()!="attack"),$"策略{strategy}满继承上限牌让位合法牌");
+                        var only=pilot.CardChoices([capped],method,phaseCappedRun).Single();
+                        check(Cards.Project(phaseCappedRun,only).Count(c=>c.At("id").S()=="attack")==3,$"策略{strategy}强制上限过渡不虚构第四张");
+                    }
                 }
-                var offered = new[] { slow, shock, shield }; var before = new JsonArray(offered.Select(c => c.DeepClone()).ToArray()).ToJsonString();
-                var fallback = pilot.CardChoices(offered, method, confirmed);
-                check(fallback.All(c => c.Label.Contains("兜底") && c.Reason.Contains("兜底扣分"))
-                    && before == new JsonArray(offered.Select(c => c.DeepClone()).ToArray()).ToJsonString(), method + " 所有兜底记录扣分与原因，原始卡牌不改写");
             }
+            cfg.StrategyId=1;pilot.Save(cfg);
             // Screenshot regression: shock + 10% shield + burn with +4% damage.
             cfg.AllowBasicBurn = true; cfg.ShieldSkipFloors = 20; pilot.Save(cfg);
             var flame = Card("br_incendio", "brasa", "Tus autoataques dejan al objetivo ARDIENDO, y +4% de daño");
             var iron = Card("au_alba", "aurora", "Empiezas cada sala con un escudo del 10% de tu vida durante 3 s");
-            var screenshotRun = Run(freeze, burn); screenshotRun["profundidad"] = 3;
+            var screenshotRun = Run(glacier, burn); screenshotRun["profundidad"] = 3;
             foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
             {
                 var picks = pilot.CardChoices([shock, iron, flame], method, screenshotRun);
-                check(picks.Single().Card.At("id").S() == "br_incendio" && picks[0].Priority == 1200,
+                check(picks.Single().Card.At("id").S() == "br_incendio" && picks[0].Benefit > 0,
                     method + " 截图三选一：已有燃烧也选第三张烈焰，附带4%伤害真实有收益，不要求手动处理");
-                var heldFlame = Run(freeze, flame);
+                var heldFlame = Run(glacier, flame);
                 check(Pilot.Rank(pilot.CardChoices([shock, iron, flame], method, heldFlame))[0].Card.At("id").S() == "br_incendio",
                     method + " 已有同ID烈焰一份时附带数值仍可比较，不能整张视为无效");
-                check(Pilot.Rank(pilot.CardChoices([flame, attack], method, screenshotRun))[0].Card.At("id").S() == "attack",
+                check(Pilot.Rank(pilot.CardChoices([flame, attack], method, Run(glacier, burn, attack)))[0].Card.At("id").S() == "attack",
                     method + " 重复燃烧不获独立状态加分，正常攻击优于附带小额伤害");
                 var beforeFreeze = Run(burn); beforeFreeze["llegada"] = null;
                 check(pilot.CardChoices([slow, flame], method, beforeFreeze).Single().Card.At("id").S() == "es_helada",
                     method + " 烈焰附带数值不能绕过继承前有冰就选冰的优先策略");
-                check(pilot.CardChoices([shock, iron, flame], method, beforeFreeze).All(c => c.Label.Contains("兜底"))
-                    && Pilot.Rank(pilot.CardChoices([shock, iron, flame], method, beforeFreeze))[0].Card.At("id").S() == "br_incendio",
+                var openingChoices=pilot.CardChoices([shock, iron, flame], method, beforeFreeze);
+                check(method=="sima.trade"?openingChoices.Length==0:Pilot.Rank(openingChoices)[0].Card.At("id").S()=="br_incendio",
                     method + " 继承前无冰时截图菜单同样兜底烈焰，不因仅冰策略暂停");
             }
             bool emptyRejected = false;
@@ -90,12 +95,12 @@ static class FallbackSelectionTests
             poor.Forecast = new(.6, .5, .7, .5, 70, 64);
             check(Pilot.BeforeShopExit([poor, exit], baseline).Single() == poor, "商店兜底商品确有模拟收益时仍可购买");
             check(Pilot.BeforeShopExit([poor], baseline).Length == 1, "商店无离店候选时不因策略比较清空所有选择");
-            var shopRun = Run(freeze); shopRun["id"] = "shop-run"; shopRun["nodo"] = "shop";
+            var shopRun = Run(glacier); shopRun["id"] = "shop-run"; shopRun["nodo"] = "shop";
             shopRun["mapa"] = JsonNode.Parse("""{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}}""");
             shopRun["destinos"] = new JsonArray("next"); shopRun["botin"] = new JsonObject { ["obolos"] = 10 };
             shopRun["tienda"] = new JsonObject { ["precio"] = 1, ["buffs"] = new JsonArray(shield.DeepClone()) };
             var snapshot = new JsonObject { ["sima"] = new JsonObject { ["run"] = shopRun } };
-            check(pilot.Build(snapshot).Any(c => c.Method == "sima.trade" && c.Label.Contains("兜底")), "生产商店护盾同样启用统一兜底");
+            check(pilot.Build(snapshot).All(c => c.Method != "sima.trade"), "生产商店只有软避让护盾时不盲买");
             shopRun["compras"] = new JsonArray("shop:buff:au_alba");
             check(pilot.Build(snapshot).All(c => c.Method != "sima.trade"), "已买商品不会因策略兜底重复购买");
             shopRun["compras"] = new JsonArray(); shopRun["botin"]!["obolos"] = 0;

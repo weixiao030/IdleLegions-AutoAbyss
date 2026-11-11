@@ -5,17 +5,26 @@ static class Selection
 {
     internal static Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run, Settings Config)
     {
-        bool skippedShield = cards.Any(c => Cards.Rate(c, Config).Allowed && Cards.SkipEarlyShield(c, run, Config));
-        cards = cards.Where(c => Cards.Rate(c, Config).Allowed && !Cards.SkipEarlyShield(c, run, Config)).ToArray();
+        var legal = cards.Where(CardRules.Available).ToArray();
+        var baseline = method == "sima.guarda" ? FrostAbyss.Cards.Inherited(run)
+            : method == "sima.blason" ? FrostAbyss.Cards.Current(run) : run.At("reliquias").A().ToArray();
+        bool Redundant(JsonNode c) => CardRules.HasInheritedCore(run, Config) && FrostAbyss.Cards.IsCore(c, Config) && baseline.Any(x => FrostAbyss.Cards.IsCore(x, Config))
+            && CardRules.AllTargetEvery(c) == 0 && !CardRules.HasSupplementalValue(c, Config)
+            || Effects.Parse([c], Config).Slow > 0 && Effects.Parse([c], Config).Slow <= Effects.Parse(baseline, Config).Slow
+                && !CardRules.HasSupplementalValue(c, Config) && CardRules.AllTargetEvery(c) == 0;
+        cards = legal.Where(c => Cards.Rate(c, Config).Allowed && !Cards.SkipEarlyShield(c, run, Config) && !Redundant(c)).ToArray();
+        bool fallback = cards.Length == 0;
+        if (fallback) { if (method == "sima.trade") return []; cards = legal; }
         // A fully inherited stack grants no additional effect. Prefer any card
         // that can still add a stack; keep a legal fallback when all are capped.
         if (method == "sima.guarda" && cards.Any(c => c.At("llevas").N() < 3))
             cards = cards.Where(c => c.At("llevas").N() < 3).ToArray();
         var action = method == "sima.guarda" ? "带走遗物：" : method == "sima.blason" ? "选择徽章：" : "选择遗物：";
-        var choices = cards.Select(c => (Card: c, Rating: Cards.Rate(c, Config))).Where(x => x.Rating.Allowed).Select(x => new Choice((x.Rating.Core ? "普攻冻结核心：" : action) + J.Name(x.Card), method, new() { ["id"] = x.Card.At("id").S() }, x.Rating.Value, x.Rating.Value < 0 ? 1 : 0, x.Rating.Core, Cards.Priority(x.Card, Config, run, method), x.Card) { Reason = Cards.Reason(x.Card, Config, run, method) }).ToArray();
-        if (choices.Length == 0) throw new Exception(skippedShield
-            ? "当前选项只剩前几层暂不选择的护盾或禁止的普攻点燃/带电牌，已暂停；请手动处理或关闭前期护盾避让后继续。"
-            : "当前选项全部是禁止的普攻点燃/带电牌，已暂停，不会自动选择；请在游戏中处理后继续。");
+        var choices = cards.Select(c => new Choice((fallback ? "经典规则兜底：" : action) + J.Name(c), method,
+            new() { ["id"] = c.At("id").S() }, core: FrostAbyss.Cards.IsCore(c, Config),
+            priority: Cards.Priority(c, Config, run, method) - CardRules.RepeatPenalty(c, baseline, Config), card: c)
+            { Reason = Cards.Reason(c, Config, run, method) + "；经典选牌修正：重复收益降权，继承基线按到达回执核对" }).ToArray();
+        if (choices.Length == 0) throw new Exception("游戏菜单没有实际可选的卡牌，不能派发不可用选项。");
         return choices;
     }
 internal static Choice[] BeforeShopExit(Choice[] candidates, Forecast? baseline)

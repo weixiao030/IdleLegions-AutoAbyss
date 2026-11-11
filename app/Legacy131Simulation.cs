@@ -105,7 +105,7 @@ sealed class Simulation
         Battles++;
     }
     static double Number(string desc) => Regex.Match(desc, @"([0-9]+(?:[.,][0-9]+)?)%").Value.TrimEnd('%').Replace(',', '.') is { } v && double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n / 100 : 1;
-    static Skill[] Skills(JsonNode? h) => h.At("skills").A().Where(k => k.At("equipped").B() && k.At("damages").B()).Select(k =>
+    static Skill[] Skills(JsonNode? h) => h.At("skills").A().Where(k => k.At("equipped").B() && FrostAbyss.Simulation.DamagingSkill(k)).Select(k =>
         new Skill(Math.Clamp(Number(k.At("desc").S()), .1, 20), Math.Max(2, k.At("cooldown").N(10)), k.At("element").S("physical"),
             k.At("desc").S().Contains("TODOS") || k.At("target").S().Contains("all"), k.At("rule", "focus").S(), k.At("rule", "cond").S("always"), k.At("rule", "value").N(), k.At("animaCoste").N())).ToArray();
     internal static double SharpenPotential(JsonNode? hero) => Skills(hero).Sum(k => k.Mult * (k.Aoe ? 2 : 1) / k.Cooldown);
@@ -284,7 +284,7 @@ sealed class Simulation
             double avg=rem/cfg.Simulations,coverage=frozenSum/cfg.Simulations;
             double searchBonus=!current.Freeze&&c.Card!=null&&Cards.Family(c.Card)=="escarcha"?cfg.FreezeWeight:0;
             double conflict=cfg.AvoidFireLightning&&fx.ConsumesStatus?cfg.FreezeWeight*(1-coverage):0;
-            c.Forecast=new(p,Math.Max(0,center-margin),Math.Min(1,center+margin),avg,
+            c.Forecast=new(p,Math.Min(p,Math.Max(0,center-margin)),Math.Max(p,Math.Min(1,center+margin)),avg,
                 p*100+avg*cfg.RiskAversion*25+Math.Min(4,30/Math.Max(1,totalTime/cfg.Simulations))+coverage*cfg.FreezeWeight*.15+searchBonus+c.Benefit*6-c.Risk*3-conflict,cfg.Simulations,coverage,totalTime/cfg.Simulations,known,fx.Unknown.Distinct().ToArray());
         });
         if (choices.Any(c => c.Forecast is { } f && new[] { f.Win, f.Low, f.High, f.Hp, f.Score, f.Frozen, f.Duration }.Any(x => !double.IsFinite(x))))

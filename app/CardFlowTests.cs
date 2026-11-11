@@ -80,15 +80,15 @@ static class CardFlowTests
                 check(run.At("reliquias").A().Any(c => c.At("id").S() == "es_carambano") && !CardRules.HasInheritedCore(run, pilot.Config),
                     "真实Step第二选取得冻结但未继承，不提前认定跨章核心成型");
                 await Step();
-                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 2,
-                    "真实Step本章尚未继承时第三选继续取得第二份冻结，不被普通冰伤替代");
+                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 1 && run.At("reliquias").A().Any(c=>c.At("id").S()=="es_ventisca"),
+                    "真实Step本章尚未继承时第三选补新增冰伤，不重复抢普通冻结");
                 await Step();
-                check(run.At("reliquias").A().Select(c => c.At("id").S()).SequenceEqual(["es_helada", "es_carambano", "es_carambano", "es_ventisca"]),
+                check(run.At("reliquias").A().Select(c => c.At("id").S()).SequenceEqual(["es_helada", "es_carambano", "es_ventisca", "es_ventisca"]),
                     "真实Step没有冻结候选时继续选冰伤，不拿非冰增伤");
                 check(pilot.Build(snapshot).Single().Label.Contains("兜底"), "真实Step护盾且非冰的唯一候选启用兜底");
                 await Step();
                 check(run.At("reliquias").A().Any(c => c.At("id").S() == "au_alba"), "真实Step仅剩策略避让护盾仍派发一次并继续到徽章，不暂停");
-                check(pilot.Build(snapshot).Single().Label.Contains("本章徽章"), "后续徽章选择明确标为本章徽章，不冒充可继承遗物");
+                check(pilot.Build(snapshot).Single().Method == "sima.blason", "后续徽章选择明确标为本章徽章，不冒充可继承遗物");
                 await Step();
                 check(run.At("blasones").A().Any() && !Cards.Project(run, new Choice("next", "sima.guarda", new(), card: freeze)).Any(c => c.At("id").S() == "es4_hielo"),
                     "取得的临时徽章不进入继承投影，不以临时效果挤掉冻结名额");
@@ -96,20 +96,19 @@ static class CardFlowTests
                 var session = J.Read(Path.Combine(Paths.Data, "last-session.json"));
                 var review = session.At("chapterReviews").A().Single();
                 check(requests.SequenceEqual(["sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.blason", "sima.guarda"]),
-                    "四次冰遗物（含重复冻结）、一次护盾兜底、徽章、继承七步真实派发；章末重推演仅本地执行不消费资源");
+                    "四次冰遗物（普通冻结仅一份）、一次护盾兜底、徽章、继承七步真实派发；章末重推演仅本地执行不消费资源");
                 check(review.At("freezeInherited").B() && review.At("depth").N() == 1
                     && review.At("relics").A().Select(c => c.S()).SequenceEqual(["es_carambano"])
                     && review.At("prediction", "trials").N() == 64,
                     "继承成功后按下一章确认保留的冻结重新推演64次并落盘，临时徽章已清空");
                 var status = JsonSerializer.SerializeToNode(pilot.Status(), J.Options);
-                check(!status.At("cardState", "iceOnly").B() && status.At("cardState", "freezeInherited").B()
+                check(status.At("cardState", "iceOnly").B() && status.At("cardState", "freezeInherited").B()
                     && status.At("choices").A().Single().At("method").S() == "local.chapterReview",
-                    "控制台显示已继承核心和章节复核，不残留上一章继承候选");
+                    "控制台区分实际冻结继承与冰4前置，并显示章节复核，不残留上一章继承候选");
                 run["reliquiaOferta"] = new JsonArray(freeze.DeepClone(), bounce.DeepClone(), fire.DeepClone()); Publish();
                 await Step();
-                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 1
-                    && run.At("reliquias").A().Any(c => c.At("id").S() == "fu_cadena"),
-                    "真实Step继承回执确认后停止收集纯冻结，自动选择新增五次弹跳");
+                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 2,
+                    "真实Step继承一份普通冻结仍补冰4，只有冻结选项时允许增加羁绊张数");
                 run["blasonPendiente"] = null; run["reliquias"] = new JsonArray(freeze.DeepClone()); Publish();
                 var repeat = pilot.ReviewChapter(snapshot, CancellationToken.None);
                 snapshot["peeks"]!["start"]!["enemigos"] = JsonNode.Parse("""[{"name":"Stale boss"},{"name":"Stale escort"}]""");
@@ -129,6 +128,28 @@ static class CardFlowTests
                     "截图回归真实Step自动派发第三张烈焰并确认成功，不暂停等待玩家处理");
                 pilot.Config.Simulations = 0;
                 check(pilot.ReviewChapter(snapshot, CancellationToken.None).Forecast == null, "章节复核尊重关闭抽样，不伪造胜率");
+
+                // Exercise the actual dispatcher and receipt path for every
+                // search strategy, using the isolated bridge above.
+                foreach (int strategy in new[] { 5, 6, 7 })
+                {
+                    var searchPilot = new Pilot();
+                    searchPilot.Save(new Settings { StrategyId = strategy, Simulations = 1,
+                        Search = new() { Iterations = 8, AdaptiveIterations = 8, NeuralIterations = 8,
+                            Horizon = 2, Workers = 1, AutoTrain = false } });
+                    run["blasonPendiente"] = null; run["guardaPendiente"] = null;
+                    run["reliquiaOferta"] = new JsonArray(bounce.DeepClone()); Publish();
+                    int priorRequests = requests.Count;
+                    await (Task)typeof(Pilot).GetMethod("Step", BindingFlags.NonPublic | BindingFlags.Instance)!
+                        .Invoke(searchPilot, [false, CancellationToken.None])!;
+                    check(requests.Count == priorRequests + 1 && requests.Last() == "sima.reliquia",
+                        $"策略{strategy}通过生产Step派发且仅派发一次唯一合法选牌请求");
+                    var rows = Directory.GetFiles(Path.Combine(Paths.Data, "learning-v1", "decisions"), "*.json").Select(J.Read);
+                    check(rows.Any(r => r.At("strategy").N() == strategy && r.At("confirmed").B()
+                        && r.At("before") != null && r.At("after") != null
+                        && r.At("features").A().Count() == 1 && r.At("policy") == null),
+                        $"策略{strategy}唯一候选经生产回执确认后保存前后快照，不伪造搜索标签，隔离测试不写用户数据");
+                }
             }
             finally { stop.Cancel(); await service; }
         }

@@ -13,6 +13,7 @@ sealed class Effects
     public double Slow, SlowSeconds, VsSlow, VsStatus, VsElite, Execute, ExecuteAt, RampDefense, RampCap, LowDefense, LowAt;
     public double Mark, MarkDeepen, VsMarked;
     public int MarkCap, Cleave;
+    public SortedSet<int> CleavePeriods = [], CriticalPeriods = [];
     public bool Freeze, Burn, Lightning, Poison, Taunt, ConsumesStatus, Detonate;
     public List<string> Unknown = [];
     internal static string Normalize(string s) => new(s.Normalize(NormalizationForm.FormD).Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).ToArray());
@@ -37,6 +38,9 @@ sealed class Effects
             e.ConsumesStatus |= applications.HasFlag(BasicEffect.Detonate);
             e.Taunt |= applications.HasFlag(BasicEffect.Taunt);
             int bounce = CardRules.AllTargetEvery(c);
+            if (bounce > 0) e.CleavePeriods.Add(bounce);
+            int guaranteed = IceStrategyRules.GuaranteedCritEvery(c);
+            if (guaranteed > 0) e.CriticalPeriods.Add(guaranteed);
             if (bounce > 0) e.Cleave = e.Cleave == 0 ? bounce : Math.Min(e.Cleave, bounce);
             if (t == "") { if (e.Signature() == before) e.Unknown.Add(c.At("id").S()); continue; }
             e.Damage += Read(t, @"\+" + Num + @"% de dano(?! contra| critico| de tus reacciones| recibido)") / 100;
@@ -97,12 +101,29 @@ static class Cards
     public static bool IsCore(JsonNode? c, Settings cfg)
     {
         var id = c.At("id").S();
-        if (id == (string.IsNullOrWhiteSpace(cfg.CoreCardId) ? "es2_carambano" : cfg.CoreCardId.Trim()) || id is "es_carambano" or "es2_carambano" or "es_glaciar") return true;
+        if (id == (string.IsNullOrWhiteSpace(cfg.CoreCardId) ? "es2_carambano" : cfg.CoreCardId.Trim()) || id is "es_carambano" or "es2_carambano" or "es4_hielo" or "es_glaciar") return true;
         if (c == null || Family(c) != "escarcha") return false;
         var effect = (c.At("desc").S() + " " + c.At("descZh").S()).ToLowerInvariant();
         return new[] { "tus autoataques congelan", "tus golpes básicos congelan", "tus autos congelan", "普攻使目标冻结", "普攻会冻结", "普攻冻结敌人" }.Any(effect.Contains);
     }
     public static JsonNode[] Current(JsonNode? run) => run.At("reliquias").A().Concat(run.At("blasones").A()).Concat(run.At("buffs").A()).ToArray();
+    // Current receipts explicitly report badges present on arrival. Preserve
+    // that observed prefix in next-chapter forecasts; new-floor badges alone
+    // do not prove a carryable freeze relic has been inherited.
+    internal static JsonNode[] ArrivalBadges(JsonNode run) => run.At("blasones").A()
+        .Take(Math.Clamp((int)run.At("llegada", "blasones").N(), 0, run.At("blasones").A().Count())).ToArray();
+    // 827 adjacent boss-win transitions support threshold-based carryover.
+    // Newly met thresholds are offered separately; never invent a badge choice.
+    internal static JsonNode[] RetainedBadges(JsonNode run, IEnumerable<JsonNode> retained)
+    {
+        var counts = retained.GroupBy(Family).ToDictionary(g => g.Key, g => g.Count());
+        var arrival = ArrivalBadges(run).Select(c => c.At("id").S()).ToHashSet();
+        return run.At("blasones").A().Where(c =>
+        {
+            int threshold = (int)c.At("umbral").N(CardCatalog.Find(c.At("id").S()).At("threshold").N());
+            return threshold > 0 ? counts.GetValueOrDefault(Family(c)) >= threshold : arrival.Contains(c.At("id").S());
+        }).ToArray();
+    }
     public static JsonNode[] Inherited(JsonNode run)
     {
         // Absence from the carry menu does not make a newly acquired relic inherited.
@@ -254,11 +275,14 @@ static class Cards
     }
     public static JsonNode[] Project(JsonNode run, Choice c)
     {
-        var cards = c.Method == "sima.guarda" ? Inherited(run) : Current(run);
-        if (c.Card == null) return cards;
-        // Badges affect this floor only. Inheritance projects relics only, never badges or buffs.
-        if (c.Method == "sima.guarda" && cards.Count(x => x.At("id").S() == c.Card.At("id").S()) >= 3) return cards;
-        return cards.Append(c.Card).ToArray();
+        if (c.Method == "sima.guarda")
+        {
+            var retained = Inherited(run).ToList();
+            if (c.Card != null && retained.Count(x => x.At("id").S() == c.Card.At("id").S()) < 3) retained.Add(c.Card);
+            return retained.Concat(RetainedBadges(run, retained)).ToArray();
+        }
+        var cards = Current(run);
+        return c.Card == null ? cards : cards.Append(c.Card).ToArray();
     }
     public static (bool Allowed, double Value, bool Core) Rate(JsonNode c, Settings cfg)
     {

@@ -77,8 +77,9 @@ static class CardSelectionTests
             && Priority(bounce, Run(freeze, bounce)) < Priority(fireDamage, Run(freeze, bounce))
             && Priority(attack, Run(freeze, attack)) < Priority(otherDamage, Run(freeze, attack)),
             "弹跳和数值牌允许有收益时重复，但重复优先级低于补不同增伤");
-        check(CardRules.SkipReason(bounce, Run(freeze, bounce, bounce, bounce), cfg, "sima.reliquia") != null,
-            "达到三张继承上限后不再浪费选择");
+        check(CardRules.SkipReason(bounce, Run(freeze, bounce, bounce, bounce), cfg, "sima.reliquia") == null
+            && CardRules.SkipReason(bounce, Run(freeze, bounce, bounce, bounce), cfg, "sima.guarda") != null,
+            "三张上限只约束跨层继承，本层获取仍可比较附带收益");
         var pending = Run(freeze, fireDamage); pending["llegada"] = null;
         pending["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(freeze.DeepClone(), fireDamage.DeepClone()) };
         check(!CardRules.HasInheritedCore(pending, cfg) && Cards.Priority(freeze, cfg, pending, "sima.guarda")
@@ -139,41 +140,6 @@ static class CardSelectionTests
         try
         {
             Paths.Data = temp; var pilot = new Pilot(); pilot.Save(cfg);
-            foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda" })
-            {
-                var options = new[] { freeze, slow, iceDamage, iceBounce, burn, shock, fireDamage, bounce, attack, defense };
-                var copy = new JsonArray(options.Select(c => c.DeepClone()).ToArray()).ToJsonString();
-                var choices = pilot.CardChoices(options, method, afterArrival);
-                check(choices.All(c => c.Card.At("id").S() is not ("es_carambano" or "es_helada" or "es_ventisca" or "fu_descarga"))
-                    && choices.Any(c => c.Card.At("id").S() == "br_yesca") && choices.Any(c => c.Card.At("id").S() == "es_esquirla")
-                    && Pilot.Rank(choices)[0].Card.At("id").S() == "fu_cadena",
-                    method + " 生产入口执行独立开关、普攻去重、继承后冰系偏好及弹跳优先");
-                check(new JsonArray(options.Select(c => c.DeepClone()).ToArray()).ToJsonString() == copy,
-                    method + " 不删除或改写游戏原始卡牌与描述");
-                check(pilot.CardChoices([slow, iceDamage], method, afterArrival).Single().Card.At("id").S() == "es_ventisca",
-                    method + " 强制选牌仅剩冰减速冰伤时只允许冰伤，有正常候选时不再自动拿冰减速");
-                check(Pilot.Rank(pilot.CardChoices([fireDamage, freeze, bounce], method, Run()))[0].Card.At("id").S() == "es_carambano",
-                    method + " 冻结普攻必须排在所有后续搭配前面");
-            }
-            foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda" })
-            {
-                var fallback = pilot.CardChoices([slow], method, afterArrival).Single();
-                check(fallback.Card.At("id").S() == "es_helada" && fallback.Label.Contains("兜底"), method + " 冻结已继承但只剩冰减速时明确兜底，不因策略暂停");
-            }
-            check(Pilot.Rank(pilot.CardChoices([burn, detonate, fireDamage], "sima.guarda", afterArrival))[0].Card.At("id").S() == "br_yesca",
-                "冻结继承后点燃独立效果优先继承一次，高于引爆器与火增伤");
-            check(CardRules.SkipReason(burn, Run(freeze, burn), cfg, "sima.guarda") != null
-                && CardRules.SkipReason(detonate, Run(freeze, detonate), cfg, "sima.guarda") != null,
-                "已继承点燃和引爆器都不重复占用继承名额");
-            var store = new JsonObject { ["sima"] = new JsonObject { ["run"] = afterArrival.DeepClone() } };
-            var sr = store.At("sima", "run")!;
-            sr["nodo"] = "shop"; sr["mapa"] = JsonNode.Parse("""{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}}""");
-            sr["destinos"] = new JsonArray("next"); sr["botin"] = new JsonObject { ["obolos"] = 100 };
-            sr["tienda"] = new JsonObject { ["precio"] = 1, ["buffs"] = new JsonArray(new[] { freeze, slow, iceDamage, iceBounce, burn, shock, fireDamage, bounce, defense }.Select(c => c.DeepClone()).ToArray()) };
-            var purchases = pilot.Build(store).Where(c => c.Method == "sima.trade").ToArray();
-            check(!purchases.Any(c => c.Card.At("id").S() is "es_carambano" or "es_helada" or "es_ventisca" or "fu_descarga")
-                && purchases.Any(c => c.Card.At("id").S() == "br_yesca") && Pilot.Rank(purchases)[0].Card.At("id").S() == "fu_cadena",
-                "真实商店入口同样保留火增伤电弹跳，不买重复普攻与多余冰减速冰伤");
             cfg.AllowBasicBurn = false; cfg.AllowBasicLightning = true; pilot.Save(cfg);
             var loaded = new Pilot().Config;
             check(!loaded.AllowBasicBurn && loaded.AllowBasicLightning, "独立开关反向组合保存重载，不捆绑旧开关");

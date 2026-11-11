@@ -1,0 +1,7 @@
+<Project>
+  <!-- Shared by the app and the integration tools that compile app/*.cs. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' != 'CudaProbe'">
+    <PackageReference Include="ILGPU" Version="1.5.3" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+  </ItemGroup>
+</Project>

@@ -25,7 +25,7 @@ static class Program
             if (testRoot != null) { Paths.Data = Path.GetFullPath(testRoot); Paths.GameData = Path.Combine(Paths.Data, "game-fixture"); Directory.CreateDirectory(Paths.Data); }
             Environment.Exit(SelfTest.Run(args)); return;
         }
-        if (args.Contains("--validate-model")) { Environment.Exit(ModelAudit.Run()); return; }
+        if (args.Contains("--validate-model")) { Environment.Exit(ModelAudit.Run(args)); return; }
         using var single = new Mutex(true, @"Local\FrostAbyss-Console", out var first);
         if (!first)
         {
@@ -59,7 +59,7 @@ static class Program
                 catch (ObjectDisposedException) { break; }
             }
         });
-        pilot.Note("控制台已启动。冻结普攻继承前优先只拿冰系（含冰减速），本章已有仍可优先多拿，直至章末继承确认；确认继承后再依次优先全体弹跳、独立普攻各一份、引爆器一份、火增伤与其他输出，防御少量补充；无合适候选时择优兜底，不因选牌偏好暂停；默认前七层争取核心和碎屑奖励，技能调整默认关闭。");
+        pilot.Note("控制台已启动。策略一、三、四优先冰川，否则先冰系4张，再补齐七系各4张，全部达标后按单卡新增收益比较；本层与继承分别核对。策略二保留经典修正版；五至七使用多步搜索。所有策略记录已确认实战，CPU/CUDA仅决定网络训练设备。技能调整默认关闭。");
         if (!args.Contains("--no-browser")) Open(url);
         Application.Run(context); listener.Close(); tray.Visible = false;
         try { File.Delete(Path.Combine(Paths.Data, "console.url")); } catch { }
@@ -89,7 +89,9 @@ static class Program
                     case "/api/formation":
                         pilot.SaveFormation(JsonSerializer.Deserialize<FormationRequest>(body, J.Options)?.Formation);
                         await Json(c, new { ok = true, config = pilot.Config }); return;
-                    case "/api/config": pilot.Save(JsonSerializer.Deserialize<Settings>(body, J.Options) ?? throw new Exception("配置为空。")); break;
+                    case "/api/config":
+                        pilot.Save(JsonSerializer.Deserialize<Settings>(body, J.Options) ?? throw new Exception("配置为空。"));
+                        await Json(c, new { ok = true, config = pilot.Config }); return;
                     case "/api/start": pilot.Start(); break;
                     case "/api/loop": pilot.Start(loop: JsonSerializer.Deserialize<LoopRequest>(body, J.Options) ?? throw new Exception("循环参数为空。")); break;
                     case "/api/analyze": pilot.Start(true); break;

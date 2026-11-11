@@ -114,6 +114,7 @@ static class Cards
     }
     public static JsonNode[] Inherited(JsonNode run)
     {
+        if (CardRules.ArrivalBaseline(run) is { } arrival) return arrival;
         // The offer list contains this floor's candidates, not all prior relics.
         // Entries absent from it are already inherited. For repeated IDs the
         // server's llevas is the prior stack count, independent of this floor.
@@ -189,7 +190,8 @@ static class Cards
     }
     public static JsonNode[] Project(JsonNode run, Choice c)
     {
-        var cards = c.Method == "sima.guarda" ? Inherited(run) : Current(run);
+        if (c.Method == "sima.guarda") return FrostAbyss.Cards.Project(run, c);
+        var cards = Current(run);
         if (c.Card == null) return cards;
         // Badge choices are permanent alternatives, not another copy of the offer table.
         return cards.Append(c.Card).ToArray();

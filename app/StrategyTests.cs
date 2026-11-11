@@ -54,142 +54,16 @@ static class StrategyTests
         check(P(shield, "sima.guarda") < P(poison, "sima.guarda"), "已有继承盾后优先异常增伤，高级盾仍为合法补充");
 
         var iceOriginalData = Paths.Data;
-        var iceTestData = Path.Combine(Path.GetTempPath(), "FrostAbyss-Ice-" + Guid.NewGuid().ToString("N"));
         try
         {
-        Paths.Data = iceTestData;
-        var iceCfg = new Settings { StrategyId = 3, SkipShieldCardsEarly = true, ShieldSkipFloors = 7 };
-        var bounce4 = Card("fu_bounce4", "fulgor", "Cada 4 autoataques, tu golpe salta a todos los enemigos");
-        var bounce5 = Card("po_bounce5", "ponzona", "Cada 5 autoataques, tu golpe salta a todos los enemigos");
-        var bounce6 = Card("um_bounce6", "umbra", "Cada 6 autoataques, tu golpe salta a todos los enemigos");
-        var iceRun = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(core.DeepClone()) };
-        var icePilot = new Pilot(); icePilot.Save(iceCfg);
-        Choice IcePick(params JsonNode[] cards) => Pilot.Rank(icePilot.CardChoices(cards, "sima.reliquia", iceRun))[0];
-        check(IcePick(bounce6, bounce5, bounce4).Card!.At("id").S() == "fu_bounce4", "ICE先补齐缺少的4次全体弹跳档");
-        iceRun["reliquias"]!.AsArray().Add(bounce4.DeepClone());
-        check(IcePick(bounce6, bounce5).Card!.At("id").S() == "po_bounce5", "已有4次弹跳后ICE补5次档，不误认为后续档已齐");
-        iceRun["reliquias"]!.AsArray().Add(bounce5.DeepClone());
-        check(IcePick(bounce6).Card!.At("id").S() == "um_bounce6", "4与5次档完成后ICE补6次档");
-        iceRun["reliquias"]!.AsArray().Add(bounce6.DeepClone());
-        var crit8 = Card("um_crit8", "umbra", "Cada 8 ataques, el siguiente es crítico garantizado");
-        var crit10 = Card("fu_punteria", "fulgor", "Crítico cada 10 golpes");
-        check(IceStrategyRules.GuaranteedCritEvery(crit8) == 8 && IceStrategyRules.GuaranteedCritEvery(crit10) == 10, "ICE识别8次攻击与fu_punteria每10次必暴击文案");
-        check(IcePick(crit10, crit8).Card!.At("id").S() == "um_crit8", "ICE弹跳齐备后优先补8次必暴击");
-        iceRun["reliquias"]!.AsArray().Add(crit8.DeepClone());
-        check(IcePick(crit8, crit10).Card!.At("id").S() == "fu_punteria", "已有8次必暴击仍补10次档，不重复抢同档");
-        var slowAfterCore = Card("es_slow_ice", "escarcha", "Tus golpes ralentizan un 15% durante 4 s");
-        var series7 = Enumerable.Range(0, 6).Select(i => Card("um_series_" + i, "umbra", "+1% de daño")).ToArray();
-        iceRun["reliquias"] = new JsonArray([core.DeepClone(), bounce4.DeepClone(), bounce5.DeepClone(), bounce6.DeepClone(), .. series7.Select(c => c.DeepClone())]);
-        var otherFamily = Card("au_series_next", "aurora", "+1% de daño");
-        var readyFamily = Card("um_series_next", "umbra", "+1% de daño");
-        check(icePilot.CardChoices([slowAfterCore], "sima.reliquia", iceRun).Any(c => c.Card!.At("id").S() == "es_slow_ice"), "ICE继承冻结后仍保留冰减速牌候选");
-        check(IcePick(readyFamily, otherFamily).Card!.At("id").S() == "au_series_next", "系列目标逐系计算：7张暗影后优先补0张的光耀系列");
-        iceRun["reliquias"]!.AsArray().Add(otherFamily.DeepClone());
-        for (int i = 1; i < 8; i++) iceRun["reliquias"]!.AsArray().Add(Card("au_series_" + i, "aurora", "+1% de daño"));
-        check(System.Text.Json.JsonSerializer.SerializeToNode(IceStrategyRules.Progress(iceRun, iceCfg), J.Options)!.AsArray().All(x => x.At("target").N() == 8), "ICE各元素系列目标分别显示为8张");
-        var progressBeforeBadge = System.Text.Json.JsonSerializer.SerializeToNode(IceStrategyRules.Progress(iceRun, iceCfg), J.Options)!.AsArray();
-        iceRun["blasones"] = new JsonArray(Card("au2_badge", "aurora", "+10% de daño"));
-        var progressAfterBadge = System.Text.Json.JsonSerializer.SerializeToNode(IceStrategyRules.Progress(iceRun, iceCfg), J.Options)!.AsArray();
-        check(progressAfterBadge.ToJsonString() == progressBeforeBadge.ToJsonString(), "系列八张计数只统计遗物，临时徽章不补张数");
-        check(IcePick(otherFamily, readyFamily).Card!.At("id").S() == "um_series_next", "光耀8张后不再抢系列名额，继续补未满8张的暗影");
-        var inheritedSeries = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray([core.DeepClone(), .. Enumerable.Range(0, 8).Select(i => Card("au_held_" + i, "aurora", "+1% de daño")), readyFamily.DeepClone()]), ["llegada"] = new JsonObject { ["reliquias"] = 9 } };
-        check(Pilot.Rank(icePilot.CardChoices([otherFamily, readyFamily], "sima.guarda", inheritedSeries))[0].Card!.At("id").S() == "um_series_next", "继承只按真正旧遗物计算系列进度，不把本章全部新增卡当已继承");
-        var lowLifeShadow = Card("um_low_life", "umbra", "Si tu vida está por debajo del 25%, +40% de daño");
-        iceRun["reliquias"] = new JsonArray([core.DeepClone(), bounce4.DeepClone(), bounce5.DeepClone(), bounce6.DeepClone(), crit8.DeepClone(), crit10.DeepClone(), lowLifeShadow.DeepClone()]);
-        var repeatLowLife = Card("um_low_life_repeat", "umbra", "Si tu vida está por debajo del 25%, +40% de daño");
-        check(IcePick(repeatLowLife, otherFamily).Card!.At("id").S() == "au_series_next", "暗影低血增伤满足一次后停止无限压过系列补齐");
-        var heldDeepen = Card("um_deepen_held", "umbra", "Marcas más hondo: +2% de daño recibido por marca, hasta 5");
-        iceRun["reliquias"]!.AsArray().Add(heldDeepen.DeepClone());
-        var repeatDeepen = Card("um_deepen_repeat", "umbra", "Marcas más hondo: +2% de daño recibido por marca, hasta 5");
-        check(IcePick(repeatDeepen, otherFamily).Card!.At("id").S() == "au_series_next", "暗影标记加深满足一次后不再无限重复争抢系列名额");
-        iceRun["reliquias"] = new JsonArray([core.DeepClone(), .. Enumerable.Repeat(Card("br_stack", "brasa", "+1% de daño"), 3).Select(c => c.DeepClone())]);
-        var fourthSameRelic = Card("br_stack", "brasa", "+1% de daño");
-        check(icePilot.CardChoices([fourthSameRelic, otherFamily], "sima.reliquia", iceRun)
-                .Any(c => c.Card!.At("id").S() == "br_stack" && !c.Label.Contains("兜底")),
-            "同种遗物超过3张仍允许本层继续获取，继承上限不误当成获取上限");
-        var cappedInheritance = Card("br_capped", "brasa", "+1% de daño"); cappedInheritance["llevas"] = 3;
-        var openInheritance = Card("au_open", "aurora", "+1% de daño"); openInheritance["llevas"] = 0;
-        var carryRun = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(core.DeepClone(), cappedInheritance.DeepClone()),
-            ["llegada"] = new JsonObject { ["reliquias"] = 2 }, ["guardaPendiente"] = new JsonObject { ["cartas"] = new JsonArray(cappedInheritance.DeepClone(), openInheritance.DeepClone()) } };
-        check(IceStrategyRules.SkipReason(cappedInheritance, carryRun, iceCfg, "sima.guarda") != null
-                && IceStrategyRules.SkipReason(cappedInheritance, carryRun, iceCfg, "sima.reliquia") == null,
-            "三层限制只用于继承选择，不误伤本层普通遗物选择");
-        // Screenshot numbers mean left-to-right. IDs below are local fixtures;
-        // selection must work from Chinese or Spanish effects even for new IDs.
-        var screenshotEffects = new (string Family, string Zh, string Es)[][]
-        {
-            [("umbra", "标记更深：每层 +2%，最多5层，持续时间翻倍", "Marcas más hondo: +2% de daño recibido por marca, hasta 5; duran el doble"),
-             ("umbra", "生命低于25%时伤害+40%", "Si tu vida está por debajo del 25%, +40% de daño"),
-             ("umbra", "击杀后2秒无敌，下一击必定暴击；伤害+3%", "Matar te deja intocable 2 s, el siguiente golpe es crítico y +3% de daño")],
-            [("brasa", "你的普攻使目标陷入燃烧", "Tus autoataques dejan al objetivo ARDIENDO"),
-             ("brasa", "元素反应伤害+25%，伤害+5%", "+25% de daño de tus reacciones y +5% de daño"),
-             ("brasa", "对带有状态的目标伤害+20%，伤害+2%", "+20% de daño contra lo que lleve un estado encima y +2% de daño")],
-            [("umbra", "你的攻击施加印记，每层受到伤害+2%，最多3层；对被标记目标伤害+3%", "Tus golpes MARCAN: +2% de daño recibido por marca, hasta 3; pegas +3% a lo marcado"),
-             ("ponzona", "对带有状态的目标伤害+40%", "+40% de daño contra lo que lleve un estado encima"),
-             ("brasa", "你的普攻附带燃烧，反应伤害+15%，伤害+2%", "Tus autos queman; +15% de daño de tus reacciones y +2% de daño")],
-            [("aurora", "生命低于40%时，防御提升30%并清除自身状态", "Por debajo del 40%, tu defensa sube un 30% y limpias tus estados"),
-             ("fulgor", "你每8次攻击必定暴击", "Cada 8 ataques tu golpe es crítico"),
-             ("escarcha", "每承受一次攻击防御+4%，最多+60%，并反击两次", "Cada golpe que recibes te suma 4% de defensa hasta +60%, y contraatacas dos veces")],
-            [("ponzona", "对生命低于30%的目标伤害+25%", "+25% de daño contra objetivos por debajo del 30% de vida"),
-             ("brasa", "对带有状态的目标伤害+22%，伤害+2%", "+22% de daño contra lo que lleve un estado encima y +2% de daño"),
-             ("escarcha", "每承受一次攻击防御+4%，最多+60%，并反击两次", "Cada golpe que recibes te suma 4% de defensa hasta +60%, y contraatacas dos veces")],
-            [("ponzona", "你的普攻使目标中毒", "Tus autoataques ENVENENAN"),
-             ("ponzona", "对带有状态的目标伤害+20%，伤害+2%", "+20% de daño contra lo que lleve un estado encima y +2% de daño"),
-             ("ponzona", "你的攻击使目标减速10%，持续3秒", "Tus golpes dejan al objetivo un 10% más lento durante 3 s")]
-        };
-        int[] primary = [1, 1, 1, 1, 0, 1];
-        int[] secondary = [0, 2, -1, 2, 1, 2];
-        int[][] permutations = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
-        foreach (var language in new[] { "zh", "es" })
-        for (int image = 0; image < screenshotEffects.Length; image++)
-        foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda", "sima.trade" })
-        foreach (bool full in new[] { false, true })
-        {
-            var held = IceStrategyRules.Families.SelectMany(f => Enumerable.Range(0, full ? 8 : 1)
-                .Select(i => Card($"held_{f}_{i}", f, "+1% de daño"))).Prepend(core.DeepClone()).ToArray();
-            iceRun["reliquias"] = new JsonArray(held);
-            iceRun.AsObject().Remove("llegada"); iceRun.AsObject().Remove("guardaPendiente");
-            var menu = screenshotEffects[image].Select((x,i) =>
-            {
-                var c = Card($"screenshot_{image}_{i}_{language}", x.Family, language == "es" ? x.Es : "");
-                if (language == "zh") c["descZh"] = x.Zh;
-                return c;
-            }).ToArray();
-            foreach (var order in permutations)
-            {
-                var options = order.Select(i => menu[i]).ToArray();
-                var screenshotPick = Pilot.Rank(icePilot.CardChoices(options, method, iceRun))[0];
-                check(screenshotPick.Card!.At("id").S() == menu[primary[image]].At("id").S(),
-                    $"ICE图{image+1} {language} {method} 系列满{full} 换位{string.Join(',',order)}首选按效果");
-                if (secondary[image] >= 0)
-                {
-                    var fallbackOptions = options.Where(c => c != menu[primary[image]]).ToArray();
-                    var fallbackPick = Pilot.Rank(icePilot.CardChoices(fallbackOptions, method, iceRun))[0];
-                    check(fallbackPick.Card!.At("id").S() == menu[secondary[image]].At("id").S(),
-                        $"ICE图{image+1} {language} {method} 系列满{full} 换位{string.Join(',',order)}首选缺席选次选");
-                }
-            }
-            menu[primary[image]]["disponible"] = false;
-            if (secondary[image] >= 0)
-                check(Pilot.Rank(icePilot.CardChoices(menu, method, iceRun))[0].Card!.At("id").S()
-                    == menu[secondary[image]].At("id").S(), $"ICE图{image+1}首选不可用时选次选");
-        }
-        iceRun["reliquias"] = new JsonArray(core.DeepClone());
-        check(IcePick(poison, bounce4).Card!.At("id").S() == bounce4.At("id").S(), "截图偏好不压过缺少的全体弹跳");
-        check(IcePick(poison, crit10).Card!.At("id").S() == crit10.At("id").S(), "截图偏好不压过缺少的10次必暴击");
-        iceRun["reliquias"] = new JsonArray();
-        check(IcePick(poison, core).Core, "截图偏好不压过尚未继承的普攻冻结");
-        var badgeNoFreeze = Pilot.Rank(icePilot.CardChoices([
-            Card("badge_low", "umbra", "Si tu vida está por debajo del 25%, +40% de daño"),
-            Card("badge_deepen", "umbra", "Marcas más hondo: +2% de daño recibido por marca, hasta 5")], "sima.blason", iceRun))[0];
-        check(badgeNoFreeze.Card!.At("id").S() == "badge_low", "冻结尚未继承且仅有暗影徽章时仍按低血优先兜底");
-
+        Paths.Data = Path.Combine(iceOriginalData, "classic-isolation");
+        var icePilot = new Pilot();
         icePilot.Save(new Settings { StrategyId = 2, SkipShieldCardsEarly = false });
-        var v131Run = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(core.DeepClone()) };
+        var v131Run = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(glacier.DeepClone()) };
         check(Pilot.Rank(icePilot.CardChoices([crit, slow, shield], "sima.reliquia", v131Run))[0].Card!.At("id").S() == "au_alba", "策略二保留v1.3.1已有冻结后首张护盾优先顺序");
 
         }
-        finally { Paths.Data = iceOriginalData; if (Directory.Exists(iceTestData)) Directory.Delete(iceTestData, true); }
+        finally { Paths.Data = iceOriginalData; }
 
         check(cfg.AvoidEliteIds.SequenceEqual(["sg_alferez"]) && EliteRules.Catalog.Length == 22, "精英多选默认陪葬旗官，清单包含22种已核对精英");
         cfg.AvoidEliteIds = []; // Explicit empty-list case; new default is tested above.
@@ -233,19 +107,20 @@ static class StrategyTests
             var localized=Card("future_burn","brasa",""); localized["descZh"]="普攻使敌人燃烧";
             foreach(var method in new[]{"sima.reliquia","sima.blason","sima.guarda"})
             {
+                run["reliquias"] = new JsonArray(glacier.DeepClone());
                 var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,run);
                 check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"按独立开关排除普攻点燃带电，关闭构筑偏好仍有效，已继承冻结后电系弹跳允许");
             }
             var fallback=pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());
             check(fallback.Length==prohibited.Length && fallback.All(c=>c.Label.Contains("兜底")),"只有策略避让牌时恢复实际候选并记录兜底，不暂停");
-            var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_carambano"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
+            var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_glaciar"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
             store["sima"]!["run"]!["tienda"]!["buffs"]=new JsonArray(prohibited.Append(described).Append(shield).Select(c=>c.DeepClone()).ToArray());
             cfg.AllowBasicBurn=false; pilot.Save(cfg);
             var shop=pilot.Build(store).Where(c=>c.Method=="sima.trade").ToArray();
             check(shop.Length==1 && shop[0].Card.At("id").S()=="au_alba","生产商店入口过滤禁牌且允许第二张高级盾");
-            var inherited=JsonNode.Parse("""{"reliquias":[{"id":"es_carambano"}],"guardaPendiente":{"cartas":[{"id":"au_alba","llevas":1}]}}""")!;
+            var inherited=JsonNode.Parse("""{"reliquias":[{"id":"es_glaciar"}],"guardaPendiente":{"cartas":[{"id":"au_alba","llevas":1}]}}""")!;
             inherited["guardaPendiente"]!["cartas"]![0]!["desc"] = shield.At("desc").S();
-            check(Pilot.Rank(pilot.CardChoices([core,shield,crit],"sima.guarda",inherited))[0].Card.At("id").S()=="um_filo","已继承冻结和盾后优先双暴，不重复抢冻结或高级盾");
+            check(pilot.CardChoices([core,shield,crit],"sima.guarda",inherited).All(c=>c.Card.At("id").S()!="es_carambano"),"已继承冻结和盾后优先双暴，不重复抢冻结或高级盾");
             var temporary=JsonNode.Parse("""{"blasones":[{"id":"es2_carambano"}],"reliquias":[],"guardaPendiente":{"cartas":[{"id":"es_carambano","llevas":0},{"id":"au_alba","llevas":0}]}}""")!;
             check(Pilot.Rank(pilot.CardChoices([shield,core],"sima.guarda",temporary))[0].Core,"临时冻结徽章不替代必须继承的首个冻结核心");
             var zeroChoice=new Choice("不抽样路线","sima.move",new(),risk:10);

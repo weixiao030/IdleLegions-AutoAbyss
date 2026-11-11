@@ -75,13 +75,20 @@ static class ResilienceTests
             var defense = Parse("""{"id":"defense","familia":"ponzona","desc":"+20% de vida"}""");
             var attack = Parse("""{"id":"attack","desc":"+20% de daño"}""");
             var bounce = Parse("""{"id":"fu_cadena","desc":"Cada 5 autoataques, tu golpe salta a todos"}""");
-            var held = new JsonObject { ["reliquias"] = new JsonArray(core.DeepClone(), shield.DeepClone()) };
+            JsonObject SelectionRun(bool withShield, int depth=0)
+            {
+                var full=IceStrategyRules.Families.SelectMany(f=>Enumerable.Range(0,4).Select(i=>(JsonNode)new JsonObject{["id"]=$"held_{f}_{i}",["familia"]=f})).ToArray();
+                full[0]=core.DeepClone();
+                if(withShield) full[Array.FindIndex(full,c=>Cards.Family(c)=="aurora")]=shield.DeepClone();
+                return new JsonObject{["profundidad"]=depth,["reliquias"]=new JsonArray(full)};
+            }
+            var held = SelectionRun(true);
             foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda" })
             {
                 check(Pilot.Rank(pilot.CardChoices([defense, shield, attack, bounce], method, held))[0].Card.At("id").S() == "fu_cadena", method + " 弹跳优于攻击及重复盾、防御");
                 check(Pilot.Rank(pilot.CardChoices([defense, shield, attack], method, held))[0].Card.At("id").S() == "attack", method + " 普通攻击优于冰毒纯防御及重复盾");
             }
-            var firstShield = new JsonObject { ["reliquias"] = new JsonArray(core.DeepClone()) };
+            var firstShield = SelectionRun(false);
             check(Pilot.Rank(pilot.CardChoices([attack, shield, bounce], "sima.reliquia", firstShield))[0].Card.At("id").S() == "fu_cadena", "即使缺首盾，仍先选全体弹跳，防御只作补充");
             var shop = Fixture(); var sr = shop.At("sima", "run")!;
             sr["heroes"] = new JsonArray(); sr["reliquias"] = held["reliquias"]!.DeepClone(); sr["lagrimas"] = 0;
@@ -97,11 +104,11 @@ static class ResilienceTests
             {
                 foreach (var depth in new[] { 0, 6 })
                 {
-                    var early = new JsonObject { ["profundidad"] = depth, ["reliquias"] = new JsonArray(core.DeepClone()) };
+                    var early = SelectionRun(false, depth);
                     var opts = pilot.CardChoices([shield, attack], method, early);
                     check(opts.Length == 1 && opts[0].Card.At("id").S() == "attack", method + " P" + depth + "排除首盾，只拿攻击");
                 }
-                var late = new JsonObject { ["profundidad"] = 7, ["reliquias"] = new JsonArray(core.DeepClone()) };
+                var late = SelectionRun(false, 7);
                 check(pilot.CardChoices([shield, attack], method, late).Any(c => c.Card.At("id").S() == "au_alba") && Pilot.Rank(pilot.CardChoices([shield, attack], method, late))[0].Card.At("id").S() == "attack", method + " P7解除护盾避让但输出仍优先，首盾可补");
             }
             check(!pilot.Build(shop).Any(c => c.Card.At("id").S() == "au_alba"), "前7层商店不买护盾");

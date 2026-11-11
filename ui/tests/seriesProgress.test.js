@@ -11,11 +11,11 @@ test('no active run uses a waiting state, not a historical completion claim', ()
   assert.match(seriesStatus(series([8,8,8,8,8,8,8]), false), /尚未进入/);
 });
 test('each family has its own deficit and source data remains unchanged', () => {
-  const data=series([9,5,8,7,11,1,0]);
+  const data=series([5,2,4,3,7,1,0]);
   const before=JSON.stringify(data);
-  assert.equal(seriesStatus(data), '本层还缺：火3张、毒1张、光耀7张、钢8张。');
+  assert.equal(seriesStatus(data), '本层还缺：火2张、毒1张、光耀3张、钢4张。');
   assert.equal(JSON.stringify(data),before);
 });
 test('only seven completed family counters declare current-floor completion', () => {
-  assert.equal(seriesStatus(series([8,9,10,8,8,8,8])), '本层七系已齐，继续核对继承进度。');
+  assert.equal(seriesStatus(series([4,5,6,4,4,4,4])), '本层七系已齐，继续核对继承进度。');
 });

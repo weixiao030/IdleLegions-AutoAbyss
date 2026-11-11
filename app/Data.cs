@@ -53,6 +53,7 @@ sealed class Settings
     public bool LoopUntilRopesEmpty { get; set; } = false;
     public bool PreferFreezeBuild { get; set; } = true;
     public int StrategyId { get; set; } = 1;
+    public SearchSettings Search { get; set; } = new();
     public CustomStrategySettings CustomStrategy { get; set; } = new();
     public int ClearFloors { get; set; } = 0;
     public int ReserveRopes { get; set; } = 2;
@@ -93,7 +94,8 @@ sealed class Settings
     public static bool ValidFormation(string[]? f) => FormationRules.Valid(f);
     public void Validate()
     {
-        if (StrategyId is < 1 or > 4) throw new Exception("请选择策略一至策略四。");
+        if (StrategyId is < 1 or > 7) throw new Exception("请选择策略一至策略七。");
+        (Search ?? throw new Exception("搜索配置为空，请恢复默认。")).Validate();
         // Inactive custom settings cannot change or invalidate strategies 1–3.
         if (StrategyId == 4) (CustomStrategy ?? throw new Exception("策略四配置为空，请恢复默认。")).Validate();
         if (AvoidEliteIds == null || AvoidEliteIds.Length > EliteRules.Catalog.Length || AvoidEliteIds.Any(id => id == null || !EliteRules.Catalog.Any(e => e.Id == id)) || AvoidEliteIds.Distinct().Count() != AvoidEliteIds.Length) throw new Exception("精英避让名单无效，请从列表中选择不同精英；可留空。");

@@ -60,3 +60,18 @@ test('known runtime relics display verified Chinese names and effect description
  assert.equal(cardName({id:'future',nombre:'Future card'}),'新发现卡牌');
  assert.equal(cardText({id:'future',desc:'Future effect'}),'效果资料待核实');
 });
+
+
+test('light preset is opt-in and preserves all existing custom settings',async()=>{
+ const {applyLightPreset,cardTitle}=await import('../src/customStrategy.js');
+ const v=defaults();v.familyOrder.reverse();v.cards.au_fervor={priority:7,targetCopies:2,mode:'avoid'};
+ const before=structuredClone(v),next=applyLightPreset(v);
+ assert.equal(defaults().lightFervorOnly,false);assert.equal(next.lightFervorOnly,true);
+ assert.deepEqual(v,before);assert.deepEqual(next.cards,v.cards);assert.deepEqual(next.familyOrder,v.familyOrder);
+ assert.equal(importStrategy(exportStrategy(next)).lightFervorOnly,true);
+ const old=JSON.parse(exportStrategy(v));delete old.settings.lightFervorOnly;
+ assert.equal(importStrategy(JSON.stringify(old)).lightFervorOnly,false);
+ assert.match(customError({...v,lightFervorOnly:'true'}),/光系/);
+ assert.equal(cardTitle(catalog.cards.find(c=>c.id==='es_carambano')),'冰锥 · 遗物');
+ assert.equal(cardTitle(catalog.cards.find(c=>c.id==='es2_carambano')),'冰锥 · 2张羁绊');
+});

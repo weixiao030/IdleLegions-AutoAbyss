@@ -1,11 +1,41 @@
 {
-  "strategyId": 1,
   "simulations": 2000,
   "seed": 73129,
   "delayMs": 1000,
   "startDepth": 0,
   "stopDepth": 0,
   "maxRuns": 1,
+  "loopUntilRopesEmpty": false,
+  "preferFreezeBuild": true,
+  "strategyId": 1,
+  "search": {
+    "mode": "manual",
+    "iterations": 1024,
+    "adaptiveIterations": 4096,
+    "neuralIterations": 2048,
+    "horizon": 20,
+    "workers": 8,
+    "exploration": 1.4,
+    "autoTrain": true,
+    "trainingEpochs": 12,
+    "trainingDevice": "cpu"
+  },
+  "customStrategy": {
+    "selectionMode": "adaptive",
+    "familyOrder": [
+      "escarcha",
+      "aurora",
+      "fulgor",
+      "brasa",
+      "ponzona",
+      "umbra",
+      "acero"
+    ],
+    "categoryOrder": {},
+    "cards": {},
+    "avoidOwnedEffects": true,
+    "lightFervorOnly": false
+  },
   "clearFloors": 0,
   "reserveRopes": 2,
   "retreatHp": 0,
@@ -19,6 +49,9 @@
   "autoPactWithFreeze": true,
   "skipEightHitPact": true,
   "skipDodgePact": true,
+  "skipShieldCardsEarly": true,
+  "shieldSkipFloors": 7,
+  "retryTimeouts": true,
   "farmWithFreeze": true,
   "rewardFloors": 7,
   "avoidCombatAfterRewardFloors": true,
@@ -26,10 +59,17 @@
   "shardRewardWeight": 4,
   "freezeDuration": 1,
   "pactFloors": 7,
+  "allowBasicBurn": true,
+  "allowBasicLightning": false,
   "avoidFireLightning": true,
+  "lightningConsumesFreeze": true,
   "autoEnter": true,
   "allowElite": true,
+  "avoidEliteIds": [
+    "sg_alferez"
+  ],
   "allowAmbush": true,
+  "separateTargets": true,
   "allowNonIceUtility": true,
   "coreCardId": "es2_carambano",
   "gamePath": "",
@@ -38,23 +78,5 @@
     "mago",
     "arquera",
     "paladin"
-  ],
-  "loopUntilRopesEmpty": false,
-  "preferFreezeBuild": true,
-  "customStrategy": {
-    "familyOrder": ["fulgor", "brasa", "ponzona", "umbra", "acero", "aurora", "escarcha"],
-    "categoryOrder": {},
-    "cards": {},
-    "avoidOwnedEffects": true
-  },
-  "avoidEliteIds": [
-    "sg_alferez"
-  ],
-  "lightningConsumesFreeze": true,
-  "retryTimeouts": true,
-  "skipShieldCardsEarly": true,
-  "shieldSkipFloors": 7,
-  "allowBasicBurn": true,
-  "allowBasicLightning": false,
-  "separateTargets": true
+  ]
 }
