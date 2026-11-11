@@ -41,7 +41,7 @@ sealed class Pilot
     bool sessionOpen;
     readonly HashSet<string> skippedReplays = [];
     public bool Active => Volatile.Read(ref running) == 1;
-    public object LatestReport() => reportPath != "" && File.Exists(reportPath) ? new { name = Path.GetFileName(reportPath), text = File.ReadAllText(reportPath) } : throw new Exception("尚未生成报告。");
+    public object LatestReport() => reportPath != "" && File.Exists(reportPath) ? new { name = Path.GetFileName(reportPath), text = ResourceJournal.RefreshReport(File.ReadAllText(reportPath), receipts, roundResults.ToArray()) } : throw new Exception("尚未生成报告。");
     public Pilot()
     {
         Directory.CreateDirectory(Paths.Data);
@@ -52,6 +52,8 @@ sealed class Pilot
         foreach (var row in previous.At("battleRecords").A().OfType<JsonObject>())
             battleRecords.Enqueue(BattleJournal.Upgrade(row));
         foreach (var row in previous.At("receipts").A()) receipts.Enqueue(row.DeepClone());
+        foreach (var row in previous.At("roundResults").A()) roundResults.Add(row.DeepClone());
+        runs = (int)previous.At("runs").N();
         Bridge.RetryTimeouts = Config.RetryTimeouts;
         Bridge.Notice = text => { phase = "超时恢复中"; message = text; Note(text); };
         var reports = Path.Combine(Paths.Data, "reports");
@@ -83,7 +85,7 @@ sealed class Pilot
             foreach (var h in root.At("heroes").A()) foreach (var skill in h.At("skills").A()) if (skill is JsonObject sk) { sk.Remove("conds"); sk.Remove("focusOpts"); sk.Remove("pvpDesc"); }
         }
         var runState = s.At("sima", "run");
-        return new { bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = Config.StrategyId == 4 ? !CustomStrategy.Inherited(runState, Config) : CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = Config.StrategyId == 4 ? CustomStrategy.Inherited(runState, Config) : CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
+        return new { appVersion = Branding.Version, bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = Config.StrategyId == 4 ? !CustomStrategy.Inherited(runState, Config) : CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = Config.StrategyId == 4 ? CustomStrategy.Inherited(runState, Config) : CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), resourceRounds = ResourceJournal.Rounds(receipts, roundResults.ToArray()), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
     }
     public void Pause() { if (!Active) return; cancel?.Cancel(); phase = "正在暂停"; message = "等待当前操作回执后停止，不会再派发新操作。"; }
     public void Start(bool preview = false, LoopRequest? loop = null)
@@ -535,6 +537,7 @@ sealed class Pilot
         text.AppendLine($"本次确认操作：{receipts.Count}；实战模型已采集：{ModelBattles} 场；每候选本地推演：{Config.Simulations:N0} 次。\n");
         text.AppendLine($"结算资源净变化：核心 {finalCores-initialCores:+0;-0;0}，碎屑 {finalShards-initialShards:+0;-0;0}。暂存战利品与实际结算资源分开统计。\n");
         text.AppendLine($"最高到达深度：{maxDepth}；击败层首领：{clearedFloors}；本段战斗：{wins} 胜 / {losses} 负；普攻冻结核心：{(coreAcquired ? "已取得" : "本段未取得")}。\n");
+        text.AppendLine(ResourceJournal.Report(receipts, roundResults.ToArray()));
         text.AppendLine(BattleJournal.Report(battleRecords));
         text.AppendLine(BattleJournal.AcquisitionReport(receipts));
         text.AppendLine(DropJournal.Report(receipts));

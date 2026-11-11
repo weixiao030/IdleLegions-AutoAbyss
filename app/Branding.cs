@@ -5,6 +5,10 @@ namespace FrostAbyss;
 
 static class Branding
 {
+    internal static string Version => Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "未知";
+
     public static Icon LoadIcon(Size size)
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico")

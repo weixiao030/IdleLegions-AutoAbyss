@@ -252,6 +252,7 @@ static class SelfTest
             IceCompletionTests.Run(Assert);
             CustomStrategyTests.Run(Assert);
             BattleJournalTests.Run(Assert, args);
+            ResourceJournalTests.Run(Assert);
             DamageBreakdownTests.Run(Assert, args);
             CardSelectionTests.Run(Assert);
             IceOpeningTests.Run(Assert);

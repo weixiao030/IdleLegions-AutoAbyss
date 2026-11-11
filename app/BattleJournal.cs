@@ -111,7 +111,6 @@ static class BattleJournal
             WriteHeroRows(text, group.ToArray());
             text.AppendLine($"\n战斗数：{group.Count()}；胜利：{group.Count(x => x.At("won").B())}；");
             text.AppendLine($"事件：{group.Sum(x => x.At("eventCount").N()):N0}；日志截断：{(group.Any(x => x.At("truncated").B()) ? "是，明细不完整" : "否")}。\n");
-            WriteResourceRows(text, group.ToArray());
             WriteCardRows(text, group.ToArray());
             var files = group.Select(x => x.At("sourceFile").S()).Where(x => x != "");
             text.AppendLine("原始战斗回执：" + string.Join("、", files) + "。\n");
@@ -188,17 +187,6 @@ static class BattleJournal
             .Select(g => new { Name = g.Key, Loss = g.Sum(h => h.At("hpLoss").N()) }).OrderByDescending(x => x.Loss).FirstOrDefault();
         if (losses != null)
             text.AppendLine($"\n分析提示：战败场中{losses.Name}结算生命损失合计 {losses.Loss:N0}，建议优先核对该角色的站位、生存装备与护盾覆盖；这些记录不能单独证明最优配装。\n");
-    }
-
-    static void WriteResourceRows(System.Text.StringBuilder text, JsonNode[] battles)
-    {
-        text.AppendLine("| 确认资源差分 | 核心 | 碎屑 | 奥波币 |\n|---|---:|---:|---:|");
-        foreach (var battle in battles)
-        {
-            var delta = battle.At("resourceDelta");
-            text.AppendLine($"| 第{battle.At("round").N()}轮 P{battle.At("depth").N()} | {DeltaText(delta.At("cores"))} | {DeltaText(delta.At("shards"))} | {DeltaText(delta.At("obols"))} |");
-        }
-        text.AppendLine("资源数值为战斗操作前后游戏快照差分；快照缺失记为未确认，不代表独立装备掉落。\n");
     }
 
     static void WriteCardRows(System.Text.StringBuilder text, JsonNode[] battles)
@@ -331,8 +319,6 @@ static class BattleJournal
                 };
             }).ToArray();
     }
-
-    static string DeltaText(JsonNode? n) => n == null ? "未确认" : n.N().ToString("+0;-0;0");
 
     static double? Difference(JsonNode? before, JsonNode? after, string key) =>
         before.At(key) == null || after.At(key) == null ? null : after.At(key).N() - before.At(key).N();

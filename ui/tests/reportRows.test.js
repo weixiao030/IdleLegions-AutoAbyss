@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {aggregateHeroes, latestResourceRows, equipmentRows, reportPage, REPORT_PAGE_SIZE} from '../src/reportRows.js';
+import {aggregateHeroes, roundResourceRows, equipmentRows, reportPage, REPORT_PAGE_SIZE} from '../src/reportRows.js';
 
 test('display rows paginate as 10 / 10 / 8 without modifying source', () => {
   const rows = Array.from({length: 28}, (_, i) => i);
@@ -63,20 +63,20 @@ test('non-mythic rows stay hidden but preserve mythic mailbox counts', () => {
 });
 
 
-test('resources keep only the last observation at each depth, descending numerically', () => {
- const rows=[{round:1,depth:7,id:'old'}, {round:1,depth:6,id:'p6'}, {round:1,depth:7,id:'last'}, {round:1,depth:10,id:'p10'}, {round:1,depth:8,id:'p8'}];
+test('resource totals show one completed-round row and filter only by round', () => {
+ const rows=[{round:1,cores:5,shards:3},{round:3,cores:4,shards:15},{round:2,cores:7,shards:13}];
  const before=JSON.stringify(rows);
- assert.deepEqual(latestResourceRows(rows).map(x=>x.id), ['p10','p8','last','p6']);
- assert.equal(JSON.stringify(rows), before);
+ assert.deepEqual(roundResourceRows(rows).map(x=>x.round),[3,2,1]);
+ assert.deepEqual(roundResourceRows(rows,'2'),[{round:2,cores:7,shards:13}]);
+ assert.equal(JSON.stringify(rows),before);
+ assert.deepEqual(roundResourceRows([]),[]);
 });
-test('resources retain different rounds and unknown latest values without summing or backfill', () => {
- const rows=[{round:1,depth:8,resourceDelta:{cores:100}}, {round:2,depth:7,id:'r2'}, {round:1,depth:8,resourceDelta:{cores:null}}, {round:1,depth:7,id:'r1'}];
- const result=latestResourceRows(rows);
- assert.equal(result.length,3); assert.equal(result[0].id,'r2');
- assert.equal(result[1].resourceDelta.cores,null);
- assert.deepEqual(latestResourceRows([]),[]);
- assert.deepEqual(latestResourceRows(rows.filter(x=>x.round===1)).map(x=>x.depth),[8,7]);
+test('resource presentation retains unknown and confirmed zero totals without adding battle balances', () => {
+ const rows=[{round:1,cores:0,shards:0,complete:true},{round:2,cores:null,shards:4,complete:false}];
+ assert.deepEqual(roundResourceRows(rows),[rows[1],rows[0]]);
+ assert.equal(roundResourceRows(rows,'2')[0].cores,null);
 });
+
 test('skill aggregation combines by kind and ID, retains names and conserves total damage', () => {
  const battles=[{durationSec:10,heroes:[{name:'弓箭手',damage:100,damageDetails:[{kind:'skill',id:'a',name:'连射',damage:70,events:2},{kind:'reaction',id:'a',name:'碎冰',damage:30,events:1}]}]},
  {durationSec:20,heroes:[{name:'弓箭手',damage:50,damageDetails:[{kind:'skill',id:'a',name:'a',damage:50,events:3}]}]}];

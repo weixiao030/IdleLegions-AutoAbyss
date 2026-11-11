@@ -50,13 +50,16 @@ static class BattleJournalTests
             Paths.Data = Path.Combine(directory, "restore-display");
             Directory.CreateDirectory(Paths.Data);
             J.Write(Path.Combine(Paths.Data, "last-session.json"), new {
+                runs = 1, roundResults = new[] { new { number = 1, depth = 4, won = false } },
                 battleRecords = new[] { first },
                 receipts = new[] { new { round = 1, depth = 4, cardId = "fixture-card", cardName = "已确认卡牌" } }
             });
             var restored = System.Text.Json.JsonSerializer.SerializeToNode(new Pilot().Status(), J.Options)!;
             check(restored.At("battles").A().Count() == 1 && restored.At("acquisitions").A().Single().At("cardId").S() == "fixture-card"
+                && restored.At("loop", "rounds").A().Count() == 1 && restored.At("runs").N() == 1
+                && restored.At("appVersion").S() == Branding.Version
                 && !restored.At("active").B() && !restored.At("loop", "sessionOpen").B(),
-                "重启恢复战斗和取得卡牌展示，不恢复自动执行或打开旧会话");
+                "重启恢复战斗、卡牌和轮次展示，版本来自程序；不恢复自动执行或打开旧会话");
         }
         finally { Paths.Data = originalData; }
         first["heroes"]![0]!["damage"] = 160;
@@ -69,8 +72,9 @@ static class BattleJournalTests
         second["truncated"] = true;
         var report = BattleJournal.Report([first, second, third]);
         check(report.Contains("第 1 轮 · P4") && report.Contains("第 2 轮 · P4")
-            && report.Contains("第 1 轮汇总") && report.Contains("全段角色汇总") && report.Contains("未确认")
-            && report.Contains("明细不完整"), "战报按轮层、单轮及全段分组，并明确截断和未知资源");
+            && report.Contains("第 1 轮汇总") && report.Contains("全段角色汇总")
+            && report.Contains("明细不完整") && !report.Contains("确认资源差分"),
+            "战报按轮层、单轮及全段分组并明确截断，资源总计交由整轮结算表");
         check(BattleJournal.Summarize([third, first]).Cast<JsonNode>().First().At("round").N() == 1,
             "状态接口的战斗列表按轮次深度排序");
 

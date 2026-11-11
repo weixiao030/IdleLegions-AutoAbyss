@@ -2,7 +2,7 @@ import React, {useEffect, useId, useState} from 'react';
 import ReportTable from './ReportTable.jsx';
 import DamageDetails from './DamageDetails.jsx';
 import {gameName, gameDescription, gameText} from './gameText.js';
-import {aggregateHeroes as aggregate, equipmentRows, latestResourceRows} from './reportRows.js';
+import {aggregateHeroes as aggregate, equipmentRows, roundResourceRows} from './reportRows.js';
 import {ReportNumber, ReportShare} from './ReportNumbers.jsx';
 import {Badge, Button, Select} from '@radix-ui/themes';
 import {CaretDown, ChartLineUp, DownloadSimple} from '@phosphor-icons/react';
@@ -40,7 +40,7 @@ function HeroTable({battles}){
 
 export default function BattleReport({state,onDownload,reportRound,setReportRound,reportDepth,setReportDepth}){
  const battles=state.battles||[],equipment=state.equipment||[],acquisitions=state.acquisitions||[];
- const all=[...battles,...equipment,...acquisitions];
+ const all=[...battles,...equipment,...acquisitions,...(state.resourceRounds||[])];
  const rounds=[...new Set(all.map(x=>x.round))].sort((a,b)=>a-b);
  const allDepths=[...new Set(all.filter(x=>reportRound==='all'||String(x.round)===reportRound).map(x=>x.depth))].sort((a,b)=>a-b);
  useEffect(()=>{if(reportDepth!=='all'&&!allDepths.includes(Number(reportDepth)))setReportDepth('all')},[reportDepth,reportRound,allDepths.join(','),setReportDepth]);
@@ -53,7 +53,7 @@ export default function BattleReport({state,onDownload,reportRound,setReportRoun
  const scope=reportRound==='all'?'全段':`第 ${reportRound} 轮`;
  const scopeKey=`${reportRound}:${reportDepth}`;
  const heroRows=filtered.flatMap((battle,i)=>(battle.heroes||[]).map((hero,j)=>({battle,hero,key:`${i}-${j}`})));
- const resourceRows=latestResourceRows(filtered);
+ const resourceRows=roundResourceRows(state.resourceRounds||[],reportRound);
  const lootRows=equipmentRows(drops),procRows=[...cards.values()].sort((a,b)=>b.damage-a.damage);
  return <>
   <div className="page-title"><div><h1>逐层战斗报告</h1><p>从轮次、深度和角色比较输出、生存与取得物品。</p></div><div className="actions">{state.reportPath&&<Button variant="outline" onClick={onDownload}><DownloadSimple size={17}/>下载完整报告</Button>}<Badge color={battles.length?'cyan':'gray'}>{battles.length} 场已记录</Badge></div></div>
@@ -67,9 +67,9 @@ export default function BattleReport({state,onDownload,reportRound,setReportRoun
    <section className="report-section"><div className="section-bar"><h2>卡牌触发伤害</h2><span className="muted">只统计带 rel 标记的事件</span></div>{cards.size?<ReportTable label="卡牌触发伤害" scopeKey={scopeKey} headings={['遗物 / 效果','触发伤害','占已标记触发','占全队输出','触发事件 / 标记次数']} rows={procRows} renderRow={c=><tr key={c.id}><th scope="row">{gameName('relic',c.id,c.name)}<small className="report-code">{gameDescription('relic',c.id,c.description)||c.id}</small></th><td><ReportNumber value={c.damage}/></td><td><ReportShare value={c.damage} total={cardDamage} label={c.name+'占已标记触发'}/></td><td><ReportShare value={c.damage} total={totalDamage} label={c.name+'占全队输出'}/></td><td>{fmt(c.events)} / {fmt(c.triggerUnits)}</td></tr>}/>:<p className="report-note">当前回执没有带 rel 标记的触发事件。</p>}<p className="report-note">含零伤害效果触发。标记次数按游戏的触发数量字段累计，不等于命中数；遗物计数条更新不是额外伤害。占比只反映已标记直接伤害，常驻攻击、攻速、减速和异常增伤无法从总伤害中精确拆分。</p></section>
    <section className="report-section"><div className="section-bar"><h2>分析提示</h2></div>{truncated>0&&<p className="report-note">有 {truncated} 场事件截断，输出与来源占比不完整；建议先比较未截断的同层战斗。</p>}{vulnerable&&<p className="report-note">战败场中{vulnerable.name}结算生命损失合计 <ReportNumber value={vulnerable.hp}/>。优先核对该角色的站位、生存装备及护盾覆盖，再用同层记录比较调整前后。</p>}<p className="report-note">比较同层、同阵容和相近时长的战斗更有参考价值。现有记录可定位表现变化，不能单独证明某张卡或某件装备的净提升。</p></section>
    </div></details>
-   <section className="report-section"><div className="section-bar"><h2>确认资源变化</h2><span className="muted">深度从高到低 · 每轮每层仅显示最后一次</span></div><ReportTable label="确认资源变化" scopeKey={scopeKey} headings={['轮次','深度','核心增量','碎屑增量','奥波币增量']} rows={resourceRows} renderRow={b=><tr key={`${b.round}:${b.depth}`}><td>{b.round}</td><td>P{b.depth}</td><td><ReportNumber value={b.resourceDelta?.cores}/></td><td><ReportNumber value={b.resourceDelta?.shards}/></td><td><ReportNumber value={b.resourceDelta?.obols}/></td></tr>}/><p className="report-note">每轮每层显示最后一场的操作前后暂存战利品差分，不是该层累计；全部战斗差分保留在完整报告中。负数表示消耗。跨章或缺少快照时为未确认，不等同结算入账。</p></section>
    <p className="report-note">输出与承受伤害按事件相加；护盾、免疫和过量伤害可能使事件伤害高于实际扣血。暴击、技能及反应统计命中事件数。</p>
   </>}
+  <section className="report-section resource-round-section"><div className="section-bar"><h2>每轮资源总获取</h2><span className="muted">每轮结束统计一次 · 按整轮显示</span></div>{resourceRows.length?<ReportTable label="每轮资源总获取" className="resource-round-table" numericColumns={[0,2,3,4]} scopeKey={reportRound} headings={['轮次','结果','核心总获取','其中邮寄','碎屑总获取','记录状态']} rows={resourceRows} renderRow={r=><tr key={r.round}><td>{r.round}</td><td>{r.won==null?'已结束':r.won?'通关':'战败'}</td><td><ReportNumber value={r.cores}/></td><td><ReportNumber value={r.mailedCores}/></td><td><ReportNumber value={r.shards}/></td><td>{r.complete?'结算收据已核验':'结算收据不完整'}<small className="report-code">{r.settlements} / {r.expectedSettlements} 次结算</small></td></tr>}/>:<p className="report-note">尚无已完成轮次，当前轮结束后生成一条总获取记录。</p>}<p className="report-note">合计本轮服务端结算收据，核心总获取包含到账和邮寄；缺失收据记为未确认。按轮次筛选，深度筛选不拆分整轮总数。奥波币为井内货币，其消费和清零不计作结算获取。</p></section>
   <section className="report-section"><div className="section-bar"><h2>装备与结算记录</h2><Badge color="gray">{lootRows.length} 条神话记录</Badge></div>{lootRows.length?<ReportTable label="装备与结算记录" scopeKey={scopeKey} headings={['轮次 / 深度','装备名称','稀有度','证据来源']} rows={lootRows} renderRow={({drop:d,item,pending,key})=><tr key={key}><td>第 {d.round} 轮 · P{d.depth}</td>{pending?<td colSpan={3}>寄往邮箱神话 {fmt(d.evidence.mailedMythics)} · 待领取 {fmt(d.evidence.pendingMythics)}，名称未提供</td>:<><th scope="row">{gameText(item.name)||'名称未提供'}</th><td>{rarityName(item.rarity)}</td><td>{sourceName(d.evidence?.source)}</td></>}</tr>}/>:<p className="report-note">所选范围暂无已确认的神话装备或神话邮寄 / 待领取记录。</p>}<p className="report-note">仅显示神话装备及数量大于 0 的神话邮寄 / 待领取记录；其他稀有度、稀有度未知及无新增操作不占行。原始回执和完整报告保留全部稀有度。结算收据优先；背包差分只证明操作期间新增，不能确定是哪只怪物掉落。名称未提供时不猜测。</p></section>
   <section className="report-section"><div className="section-bar"><h2>已确认取得的卡牌</h2><Badge color="gray">{acquired.length} 次</Badge></div>{acquired.length?<ReportTable label="已确认取得的卡牌" scopeKey={scopeKey} headings={['轮次','深度','卡牌','效果']} rows={acquired} renderRow={(c,i)=><tr key={i}><td>{c.round}</td><td>P{c.depth}</td><th scope="row">{gameName('relic',c.cardId,c.cardName)}</th><td>{gameDescription('relic',c.cardId,c.cardDescription)||'未提供效果文本'}</td></tr>}/>:<p className="report-note">所选范围尚无已确认卡牌回执。</p>}</section>
  </>;

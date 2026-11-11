@@ -8,14 +8,15 @@ export default function ReportTable({scopeKey, ...props}) {
   return <TablePage key={scopeKey} {...props}/>;
 }
 
-function TablePage({label, headings, rows, renderRow}) {
+function TablePage({label, headings, rows, renderRow, className = '', numericColumns = []}) {
   const [page, setPage] = useState(1);
   const {pageCount, currentPage, start, end, rows: visibleRows} = reportPage(rows, page);
   useEffect(() => {setPage(p => Math.min(p, pageCount));}, [pageCount]);
   return <>
     <div className="table-scroll">
-      <table aria-label={label}>
-        <thead><tr>{headings.map(heading => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
+      <table aria-label={label} className={className}>
+        <colgroup>{headings.map((heading, index) => <col key={heading} className={numericColumns.includes(index) ? 'report-numeric-column' : undefined}/>)}</colgroup>
+        <thead><tr>{headings.map((heading, index) => <th key={heading} scope="col" className={numericColumns.includes(index) ? 'report-numeric-heading' : undefined}>{heading}</th>)}</tr></thead>
         <tbody>{visibleRows.length ? visibleRows.map((row, index) => renderRow(row, start + index)) :
           <tr><td colSpan={headings.length}>所选范围没有明细。</td></tr>}</tbody>
       </table>

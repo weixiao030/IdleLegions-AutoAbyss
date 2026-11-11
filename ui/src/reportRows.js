@@ -1,11 +1,11 @@
 import {gameName, gameText} from './gameText.js';
 export const REPORT_PAGE_SIZE = 10;
 
-// Latest observation per round/depth; never replace unknown latest values with older ones.
-export function latestResourceRows(battles) {
-  const latest = new Map();
-  for (const battle of battles) latest.set(`${battle.round}:${battle.depth}`, battle);
-  return [...latest.values()].sort((a, b) => b.round - a.round || b.depth - a.depth);
+// Resource totals are computed from server settlement receipts by the backend.
+// Depth filters must never turn a completed round into a partial-round total.
+export function roundResourceRows(rounds, round = 'all') {
+  return rounds.filter(row => round === 'all' || String(row.round) === String(round))
+    .slice().sort((a, b) => b.round - a.round);
 }
 
 export function aggregateHeroes(battles) {

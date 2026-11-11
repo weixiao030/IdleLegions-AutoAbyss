@@ -107,6 +107,14 @@
 .report-share{display:inline-flex;align-items:center;justify-content:flex-end;gap:9px;min-width:98px;vertical-align:middle}
 .report-share-track{width:52px;flex:none;height:6px}.report-share-value{min-width:4ch;text-align:right}
 .report-section td:has(>.report-number),.report-section td:has(>.report-share){text-align:right;white-space:nowrap}
+.report-section th.report-numeric-heading{text-align:right}
+.report-section .resource-round-table th,.report-section .resource-round-table td{vertical-align:middle;padding-left:16px;padding-right:16px}
+.resource-round-table{table-layout:fixed;min-width:660px}
+.report-section .resource-round-table th:nth-child(1),.report-section .resource-round-table td:nth-child(1){width:9%;text-align:right}
+.resource-round-table th:nth-child(2){width:11%}
+.resource-round-table th:nth-child(3),.resource-round-table th:nth-child(4),.resource-round-table th:nth-child(5){width:17%}
+.resource-round-table th:nth-child(6){width:29%}
+.resource-round-table td:last-child{white-space:normal}
 .report-summary-table th:not(:first-child),.report-summary-table td{text-align:right}
 .report-summary-table th[scope=row]{text-align:left;font-weight:600}
 .report-section .report-summary-table tbody tr.report-top-output{background:var(--tint)}

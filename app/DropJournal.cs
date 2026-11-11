@@ -18,7 +18,8 @@ static class DropJournal
     internal static JsonObject Read(JsonNode? raw)
     {
         var receipt = raw.At("botin");
-        bool authoritative = receipt is JsonObject;
+        bool authoritative = receipt is JsonObject
+            && (receipt.At("nucleos") is JsonObject || receipt.At("piezas") is JsonArray);
         var source = authoritative ? "settlement-receipt" : raw.At("inventoryObserved").B() ? "inventory-delta" : "unavailable";
         var items = (authoritative ? receipt.At("piezas") : raw.At("inventoryAdded")).A()
             .Where(x => x is JsonObject).Select(x => new
