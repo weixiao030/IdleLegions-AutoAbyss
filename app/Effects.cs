@@ -121,6 +121,7 @@ static class Cards
     {
         if (cfg.StrategyId == 2) return Legacy131.Cards.BuildValue(c, cfg, run, method);
         if (cfg.StrategyId == 3) return ScoreIceStrategy(c, cfg, run, method, strategyFallback);
+        if (cfg.StrategyId == 4) return CustomStrategy.Score(c, cfg, run, method);
         var baseline = CardRules.Baseline(run, method);
         var held = Effects.Parse(baseline, cfg);
         var fx = Effects.Parse([c], cfg);

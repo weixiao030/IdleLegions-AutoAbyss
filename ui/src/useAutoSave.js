@@ -1,3 +1,4 @@
+import {customError} from './customStrategy.js';
 import {useEffect, useRef, useState} from 'react';
 
 const integers = ['simulations','seed','delayMs','startDepth','stopDepth','maxRuns','clearFloors','reserveRopes','rewardFloors','pactFloors','shieldSkipFloors','strategyId'];
@@ -6,7 +7,8 @@ export function configError(config) {
   if (!config) return '正在载入参数';
   if ([...integers,...decimals].some(k => typeof config[k] !== 'number' || !Number.isFinite(config[k]))) return '请输入完整的有限数字，填写完成后自动保存。';
   if (integers.some(k => !Number.isInteger(config[k]))) return '次数、种子、深度、层数、绳索和毫秒间隔须填写整数。';
-  if (config.strategyId < 1 || config.strategyId > 3) return '请选择策略一、策略二或策略三。';
+  if (config.strategyId < 1 || config.strategyId > 4) return '请选择策略一至策略四。';
+  if (config.strategyId === 4) return customError(config.customStrategy);
   return '';
 }
 

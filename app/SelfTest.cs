@@ -250,6 +250,7 @@ static class SelfTest
             SimulationSafetyTests.Run(Assert).GetAwaiter().GetResult();
             StrategyTests.Run(Assert);
             IceCompletionTests.Run(Assert);
+            CustomStrategyTests.Run(Assert);
             BattleJournalTests.Run(Assert, args);
             DamageBreakdownTests.Run(Assert, args);
             CardSelectionTests.Run(Assert);

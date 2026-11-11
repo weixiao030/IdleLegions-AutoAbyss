@@ -41,6 +41,12 @@
   ],
   "loopUntilRopesEmpty": false,
   "preferFreezeBuild": true,
+  "customStrategy": {
+    "familyOrder": ["fulgor", "brasa", "ponzona", "umbra", "acero", "aurora", "escarcha"],
+    "categoryOrder": {},
+    "cards": {},
+    "avoidOwnedEffects": true
+  },
   "avoidEliteIds": [
     "sg_alferez"
   ],

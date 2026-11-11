@@ -15,5 +15,5 @@
     <EmbeddedResource Include="../../shared/professions.json" LogicalName="professions.json" />
     <EmbeddedResource Include="../../shared/elites.json" LogicalName="elites.json" />
     <EmbeddedResource Include="../../ui/dist/**/*" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
-  </ItemGroup>
+  <EmbeddedResource Include="../../shared/card-catalog.json" LogicalName="card-catalog.json" /><EmbeddedResource Include="../../shared/game-text-zh.json" LogicalName="game-text-zh.json" /><EmbeddedResource Include="../../shared/strategy4-defaults.json" LogicalName="strategy4-defaults.json" /></ItemGroup>
 </Project>

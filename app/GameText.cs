@@ -36,11 +36,23 @@ static class GameText
         }
         return template;
     }
-    internal static string Name(string kind, string id, string original = "") =>
-        IsChinese(original) ? Text(original) : Catalog.At(kind == "relic" ? "cards" : kind + "s", id, "name").S(Text(original == "" ? id : original));
-    internal static string Description(string kind, string id, string original = "", string profession = "") =>
-        Text(original != "" ? original :
+    internal static string Name(string kind, string id, string original = "")
+    {
+        if (kind == "relic" && CardCatalog.Find(id) is { } card && card.At("verified").B())
+            return card.At("name").S("新发现卡牌");
+        var translated = Text(original);
+        if (IsChinese(translated)) return translated;
+        var catalogName = Catalog.At(kind == "relic" ? "cards" : kind + "s", id, "name").S();
+        return IsChinese(catalogName) ? catalogName : kind == "relic" ? "新发现卡牌" : (original == "" ? id : original);
+    }
+    internal static string Description(string kind, string id, string original = "", string profession = "")
+    {
+        if (kind == "relic" && CardCatalog.Find(id) is { } card && card.At("verified").B())
+            return card.At("description").S("效果资料待核实");
+        var translated = Text(original != "" ? original :
             (kind == "skill" ? Catalog.At("skillsByProfession", profession, id, "description") : null)
             .S(Catalog.At(kind == "relic" ? "cards" : kind + "s", id, kind == "reaction" ? "desc" : "description").S()));
+        return kind == "relic" && !IsChinese(translated) ? "效果资料待核实" : translated;
+    }
     internal static string Element(string id) => Catalog.At("elements", id).S(id == "" ? "未标记元素" : id);
 }

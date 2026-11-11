@@ -13,7 +13,7 @@
     <Product>IdleLegions自动下井</Product>
     <Title>IdleLegions自动下井</Title>
     <Description>免费开源的 IdleLegions 自动下井工具</Description>
-    <Version>1.3.10</Version>
+    <Version>1.4.0</Version>
     <ApplicationIcon>Assets/app.ico</ApplicationIcon>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
@@ -22,6 +22,8 @@
     <EmbeddedResource Include="../shared/professions.json" LogicalName="professions.json" />
     <EmbeddedResource Include="../shared/elites.json" LogicalName="elites.json" />
     <EmbeddedResource Include="../shared/game-text-zh.json" LogicalName="game-text-zh.json" />
+    <EmbeddedResource Include="../shared/card-catalog.json" LogicalName="card-catalog.json" />
+    <EmbeddedResource Include="../shared/strategy4-defaults.json" LogicalName="strategy4-defaults.json" />
     <EmbeddedResource Include="../bridge/frost_bridge.gd" LogicalName="bridge.gd" />
     <EmbeddedResource Include="../ui/dist/**/*" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

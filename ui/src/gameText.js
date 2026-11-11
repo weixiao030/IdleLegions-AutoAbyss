@@ -15,7 +15,15 @@ export function gameText(text = '') {
   }, gameText(template));
 }
 const group = kind => kind === 'relic' ? 'cards' : `${kind}s`;
-export const gameName = (kind, id, original = '') => chinese(original) ? gameText(original) : catalog[group(kind)]?.[id]?.name || gameText(original || id || '未知');
-export const gameDescription = (kind, id, original = '', profession = '') => gameText(original || (kind === 'skill' ? catalog.skillsByProfession?.[profession]?.[id]?.description : '') || catalog[group(kind)]?.[id]?.[kind === 'reaction' ? 'desc' : 'description'] || '');
+export const gameName = (kind, id, original = '') => {
+  if (kind === 'relic' && catalog[group(kind)]?.[id]?.name) return catalog[group(kind)][id].name;
+  if (chinese(original)) return gameText(original);
+  const translated = catalog[group(kind)]?.[id]?.name || gameText(original || id || '未知');
+  return kind === 'relic' && !chinese(translated) ? '新发现卡牌' : translated;
+};
+export const gameDescription = (kind, id, original = '', profession = '') => {
+  const translated = gameText(original || (kind === 'skill' ? catalog.skillsByProfession?.[profession]?.[id]?.description : '') || catalog[group(kind)]?.[id]?.[kind === 'reaction' ? 'desc' : 'description'] || '');
+  return kind === 'relic' && !chinese(translated) ? '效果资料待核实' : translated;
+};
 export const cardLabel = card => gameName('relic', card?.id, card?.nombreZh || card?.nameZh || card?.nombre || card?.name || card?.texto || '');
 export const cardDescription = card => gameDescription('relic', card?.id, card?.descZh || card?.desc || '');

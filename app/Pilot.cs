@@ -83,7 +83,7 @@ sealed class Pilot
             foreach (var h in root.At("heroes").A()) foreach (var skill in h.At("skills").A()) if (skill is JsonObject sk) { sk.Remove("conds"); sk.Remove("focusOpts"); sk.Remove("pvpDesc"); }
         }
         var runState = s.At("sima", "run");
-        return new { bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
+        return new { bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = Config.StrategyId == 4 ? !CustomStrategy.Inherited(runState, Config) : CardRules.SeekingInheritedFreeze(runState, Config), freezeInherited = Config.StrategyId == 4 ? CustomStrategy.Inherited(runState, Config) : CardRules.HasInheritedCore(runState, Config), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = Config.StrategyId == 3 ? 8 : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason }), logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
     }
     public void Pause() { if (!Active) return; cancel?.Cancel(); phase = "正在暂停"; message = "等待当前操作回执后停止，不会再派发新操作。"; }
     public void Start(bool preview = false, LoopRequest? loop = null)
@@ -219,6 +219,9 @@ sealed class Pilot
         {
             var error = Cards.InheritanceError(run, after.At("sima", "run"), pick.Card, Config);
             if (error != null) throw new Exception(error);
+            if (Config.StrategyId == 4 && Cards.Inherited(run).Count(c => c.At("id").S() == pick.Card.At("id").S()) >= 3)
+                Note($"继承已核验：P{run.At("profundidad").N()} → P{after.At("sima", "run", "profundidad").N()}，遗物保留；{CardCatalog.Name(pick.Card)}已达三张上限，本次正常过渡，没有增加张数。");
+            else
             Note($"继承已核验：P{run.At("profundidad").N()} → P{after.At("sima", "run", "profundidad").N()}，已继承遗物保留，新增 {pick.Card.At("id").S()}。" );
             phase = "章节重新推演";
             var review = ReviewChapter(after!, ct);
@@ -387,6 +390,7 @@ sealed class Pilot
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
+        if (Config.StrategyId == 4) return CustomStrategy.Choices(cards, method, run, Config);
         if (Config.StrategyId == 2) return Legacy131.Selection.CardChoices(cards, method, run, Config);
         var offered = cards.Where(CardRules.Available).ToArray();
         if (offered.Length == 0) throw new Exception("游戏没有实际可选的卡牌，等待状态更新；不会派发不可用选项。");
