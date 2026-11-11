@@ -68,7 +68,7 @@ static class ResourceJournalTests
             && ResourceJournal.RefreshReport(refreshed, receipts, results) == refreshed,
             "重启后的历史报告下载替换旧资源差分表，保留战斗数据且不重复插入");
         var report = ResourceJournal.Report(receipts, results);
-        check(report.Contains("每轮资源总获取") && report.Contains("核心总数包含到账及邮寄") && !report.Contains("核心增量"),
+        check(report.Contains("每轮资源总获取") && report.Contains("核心总数包含到账及邮寄") && report.Contains("最高层数") && report.Contains("| 1 | P1 | 6 | 1 | 6 |") && !report.Contains("核心增量"),
             "导出报告使用同一整轮结算统计口径");
     }
 }

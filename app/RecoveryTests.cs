@@ -103,7 +103,10 @@ static class RecoveryTests
                 try { await FastBridge().Send("sima.fight", new(), CancellationToken.None); } catch (UnknownOutcomeException) { paused = true; }
                 check(paused && refreshes == 6 && requests.Count(m => m == "sima.fight") == 1, "六次核验仍无证据时安全暂停且只发一次战斗");
                 state = Fixture(); refreshes = 0; requests.Clear(); Publish(); paused = false;
-                var bounded = new Bridge { RecoveryDelays = [TimeSpan.FromSeconds(1)], RecoveryTimeout = TimeSpan.FromMilliseconds(50) };
+                // Expire the budget before the next query. A 50ms Task.Delay can
+                // resume slightly early on Windows and legitimately allow a query.
+                var bounded = new Bridge { RecoveryDelays = [TimeSpan.FromSeconds(1)], RecoveryTimeout = TimeSpan.FromMilliseconds(50),
+                    Notice = _ => Thread.Sleep(75) };
                 try { await bounded.Send("sima.fight", new(), CancellationToken.None); } catch (UnknownOutcomeException) { paused = true; }
                 check(paused && refreshes == 0 && requests.Count == 1, "核验总时限耗尽后停止等待，不发出超出窗口的查询");
                 mode = "busy"; state = Fixture(); refreshes = 0; requests.Clear(); Publish();

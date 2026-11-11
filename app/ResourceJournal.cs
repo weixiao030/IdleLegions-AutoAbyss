@@ -101,9 +101,9 @@ static class ResourceJournal
         var text = new StringBuilder("## 每轮资源总获取\n\n");
         text.AppendLine("每轮结束后统计一次服务端结算收据。核心总数包含到账及邮寄；缺少结算收据不当作零。奥波币为井内货币，不计作结算获取。\n");
         if (rows.Length == 0) return text.AppendLine("尚无已完成轮次。\n").ToString();
-        text.AppendLine("| 轮次 | 核心总获取 | 其中邮寄 | 碎屑总获取 | 记录状态 |\n|---:|---:|---:|---:|---|");
+        text.AppendLine("| 轮次 | 最高层数 | 核心总获取 | 其中邮寄 | 碎屑总获取 | 记录状态 |\n|---:|---:|---:|---:|---:|---|");
         foreach (var row in rows)
-            text.AppendLine($"| {row.At("round").N()} | {Value(row.At("cores"))} | {Value(row.At("mailedCores"))} | {Value(row.At("shards"))} | {(row.At("complete").B() ? "结算收据已核验" : "结算收据不完整")} |");
+            text.AppendLine($"| {row.At("round").N()} | {(row.At("depth") == null ? "未记录" : "P" + row.At("depth").N())} | {Value(row.At("cores"))} | {Value(row.At("mailedCores"))} | {Value(row.At("shards"))} | {(row.At("complete").B() ? "结算收据已核验" : "结算收据不完整")} |");
         return text.AppendLine().ToString();
     }
 
