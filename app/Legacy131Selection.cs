@@ -5,6 +5,7 @@ static class Selection
 {
     internal static Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run, Settings Config)
     {
+        if (!OpeningRules.Complete(run, Config)) return OpeningRules.Choices(cards, method, run, Config);
         var legal = cards.Where(CardRules.Available).ToArray();
         var baseline = method == "sima.guarda" ? FrostAbyss.Cards.Inherited(run)
             : method == "sima.blason" ? FrostAbyss.Cards.Current(run) : run.At("reliquias").A().ToArray();

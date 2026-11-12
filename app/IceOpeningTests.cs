@@ -26,11 +26,11 @@ static class IceOpeningTests
                     }
                     check(Pick(State(freeze),freeze,ice).Card.At("id").S()=="es_gain_fixture",$"策略{strategy} {method}普通冻结不重复置顶");
                     var onlyBadge=State();onlyBadge["blasones"]=new JsonArray(freeze.DeepClone());
-                    check(Pick(onlyBadge,freeze,ice).Card.At("id").S()==(method=="sima.guarda"?"es_carambano":"es_gain_fixture"),$"策略{strategy} {method}真实徽章冻结作为新增收益基线");
+                    check(Pick(onlyBadge,freeze,ice).Card.At("id").S()=="es_gain_fixture",$"策略{strategy} {method}真实徽章冻结作为新增收益基线");
                     var transition=pilot.CardChoices([fire],method,State());
                     check(method=="sima.trade"?transition.Length==0:transition.Length==1,$"策略{strategy} {method}无冰强制过渡、商店正常离开");
                     var newGlacier=State();newGlacier["reliquias"]!.AsArray().Add(glacier.DeepClone());
-                    check(Pick(newGlacier,fire,ice).Card.At("id").S()==(method is "sima.guarda" or "sima.reliquia"?"es_gain_fixture":"br_gain_fixture"),$"策略{strategy} {method}本层冰川与实际继承基线分开");
+                    check(Pick(newGlacier,fire,ice).Card.At("id").S()=="es_gain_fixture",$"策略{strategy} {method}本层冰川与实际继承基线分开");
                     var capped=glacier.DeepClone();capped["llevas"]=3;
                     if(method=="sima.guarda")check(Pick(State(),capped,ice).Card.At("id").S()=="es_gain_fixture",$"策略{strategy}开局也遵守继承上限");
                 }

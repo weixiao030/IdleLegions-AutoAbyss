@@ -5,7 +5,7 @@ namespace FrostAbyss;
 static class FallbackSelectionTests
 {
     static JsonNode Card(string id, string family, string desc) => new JsonObject { ["id"] = id, ["familia"] = family, ["desc"] = desc };
-    static JsonObject Run(params JsonNode[] cards) => new() { ["profundidad"] = 0, ["reliquias"] = new JsonArray(cards.Select(c => c.DeepClone()).ToArray()) };
+    static JsonObject Run(params JsonNode[] cards) => new() { ["profundidad"] = 0, ["llegada"] = new JsonObject { ["reliquias"] = cards.Length }, ["reliquias"] = new JsonArray(cards.Select(c => c.DeepClone()).ToArray()) };
     public static void Run(Action<bool, string> check)
     {
         var original = Paths.Data;
@@ -82,7 +82,7 @@ static class FallbackSelectionTests
                     method + " 继承前无冰时截图菜单同样兜底烈焰，不因仅冰策略暂停");
             }
             bool emptyRejected = false;
-            try { pilot.CardChoices([], "sima.reliquia", confirmed); } catch (Exception e) { emptyRejected = e.Message.Contains("没有实际可选"); }
+            try { pilot.CardChoices([], "sima.reliquia", confirmed); } catch (Exception e) { emptyRejected = e.Message.Contains("没有") && e.Message.Contains("卡牌"); }
             check(emptyRejected, "真正空菜单不杜撰选择，保留等待状态保护");
             var cappedRun = Run(freeze, attack, attack, attack);
             var capChoice = pilot.CardChoices([attack], "sima.guarda", cappedRun).Single();

@@ -39,9 +39,9 @@ static class RecoveryTests
         check(!Completed(after, "another-command"), "原命令回执必须精确匹配命令ID");
         after["lastAction"]!["confirmed"] = false;
         check(!Completed(after), "未确认的命令回执不能解除暂停");
-        foreach (var version in new[] { "0.3.1", "0.3.3", "0.3.4", "unknown" })
+        foreach (var version in new[] { "0.3.1", "0.3.3", "0.3.4", "0.3.6", "unknown" })
             check(Bridge.NeedsUpdate(new JsonObject { ["version"] = version }), "识别过旧或未知桥接版本 " + version);
-        foreach (var version in new[] { "0.3.6", "0.3.10" })
+        foreach (var version in new[] { "0.3.7", "0.3.10" })
             check(!Bridge.NeedsUpdate(new JsonObject { ["version"] = version }), "不误报当前或更新桥接 " + version);
 
         var oldData = Paths.Data; var oldGame = Paths.GameData;

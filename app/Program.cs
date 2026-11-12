@@ -59,7 +59,7 @@ static class Program
                 catch (ObjectDisposedException) { break; }
             }
         });
-        pilot.Note("控制台已启动。策略一、三、四优先冰川，否则先冰系4张，再补齐七系各4张，全部达标后按单卡新增收益比较；本层与继承分别核对。策略二保留经典修正版；五至七使用多步搜索。所有策略记录已确认实战，CPU/CUDA仅决定网络训练设备。技能调整默认关闭。");
+        pilot.Note("控制台已启动。全部七策略优先冰川（单卡冻结＋全体弹跳），没有冰川就凑冰系4张，不单独追普通冻结。确认继承冰川或4张冰系遗物后启用各自方案；本层临时效果不能代替继承回执。随后一、三、四补七系各4张，二使用经典规则，五至七使用多步搜索。所有策略记录已确认实战，CPU/CUDA仅决定网络训练设备。技能调整默认关闭。");
         if (!args.Contains("--no-browser")) Open(url);
         Application.Run(context); listener.Close(); tray.Visible = false;
         try { File.Delete(Path.Combine(Paths.Data, "console.url")); } catch { }

@@ -13,8 +13,8 @@ static class SynergySelection
         ? Cards.Inherited(run) : run.At("reliquias").A().ToArray();
     internal static bool Glacier(JsonNode c, Settings cfg) => Cards.IsCore(c, cfg) && CardRules.AllTargetEvery(c) is > 0 and <= 5;
     internal static bool OpeningComplete(IEnumerable<JsonNode> relics, Settings cfg) =>
-        relics.Any(c => Glacier(c, cfg)) || relics.Count(c => Cards.Family(c) == "escarcha") >= Target;
-    internal static bool OpeningComplete(JsonNode? run, Settings cfg, string method = "sima.guarda") => OpeningComplete(Baseline(run, method), cfg);
+        OpeningRules.Complete(relics, cfg);
+    internal static bool OpeningComplete(JsonNode? run, Settings cfg, string method = "sima.guarda") => OpeningRules.Complete(run, cfg);
     internal static bool Complete(JsonNode? run, Settings cfg, string method) =>
         IceStrategyRules.Families.All(f => Baseline(run, method).Count(c => Cards.Family(c) == f) >= Target);
     internal static bool LightKeeper(JsonNode c) => c.At("id").S() is "au_fervor" or "au_letania"
@@ -51,34 +51,8 @@ static class SynergySelection
         return cards.Where(c => SoftPenalty(c, method, run, cfg) == penalty).ToArray();
     }
 
-    internal static Choice[] Opening(JsonNode[] offered, string method, JsonNode run, Settings cfg)
-    {
-        var legal = offered.Where(CardRules.Available).ToArray();
-        if (method == "sima.guarda")
-        {
-            var free = legal.Where(c => c.At("llevas").N() < 3 && Cards.Inherited(run).Count(x => x.At("id").S() == c.At("id").S()) < 3).ToArray();
-            if (free.Length > 0) legal = free;
-        }
-        var ice = legal.Where(c => Cards.Family(c) == "escarcha").ToArray();
-        bool fallback = ice.Length == 0;
-        if (!fallback) legal = ice;
-        else if (method == "sima.trade") return [];
-        if (legal.Length == 0)
-        {
-            if (method == "sima.trade") return [];
-            throw new Exception("游戏菜单没有实际可选的合法卡牌。");
-        }
-        var normal = legal.Where(c => SkipReason(c, method, run, cfg) == null).ToArray();
-        if (normal.Length > 0) legal = normal;
-        else if (method == "sima.trade") return [];
-        else legal = PreferSoftFallback(legal, method, run, cfg);
-        var held = CombatBaseline(run, method);
-        return legal.Select(c => new Choice((fallback ? "冰系过渡兜底：" : method == "sima.guarda" ? "优先继承冰系：" : "冰系4张前置：") + CardCatalog.Name(c),
-            method, new() { ["id"] = c.At("id").S() }, benefit: CardValue.Marginal(c, held, cfg),
-            core: Cards.IsCore(c, cfg), priority: !fallback && Glacier(c, cfg) ? 200_000 : 100_000, card: c)
-            { Reason = (fallback ? "本菜单无合法冰牌，择优过渡，下次继续补冰系；" : "冰川优先，否则先补冰系至4张；普通冻结不重复置顶，按实际新增收益比较；")
-                + (method == "sima.guarda" ? "仅按已继承遗物核对进度" : "本层收集进度与章末继承分别核对") }).ToArray();
-    }
+    internal static Choice[] Opening(JsonNode[] offered, string method, JsonNode run, Settings cfg) =>
+        OpeningRules.Choices(offered, method, run, cfg);
 
     internal static Choice[] Apply(Choice[] choices, string method, JsonNode run, Settings cfg)
     {

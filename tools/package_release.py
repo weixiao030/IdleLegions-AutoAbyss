@@ -9,10 +9,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / 'release'
 ARTIFACTS = ROOT / 'artifacts'
-NAME = 'IdleLegions-AutoAbyss-v1.5.1-win-x64.zip'
-PREFIX = 'IdleLegions自动下井-v1.5.1/'
+NAME = 'IdleLegions-AutoAbyss-v1.5.2-win-x64.zip'
+PREFIX = 'IdleLegions自动下井-v1.5.2/'
 DOCS = ['使用说明.docx', '使用教程.docx', '第三方组件.txt', '默认参数.json',
-        'dotnet-LICENSE.txt', 'dotnet-ThirdPartyNotices.txt', '启动说明.txt', '深井搜索与学习-1.5.1.md']
+        'dotnet-LICENSE.txt', 'dotnet-ThirdPartyNotices.txt', '启动说明.txt', '深井搜索与学习-1.5.2.md',
+        '真实测试-1.5.2.md', '发布验证-1.5.2.md',
+        '训练后实测-v1-1.5.2.md', '七策略实测汇总-1.5.2.md']
 
 def digest(path):
     with path.open('rb') as stream:

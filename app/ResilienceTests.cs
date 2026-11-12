@@ -80,7 +80,7 @@ static class ResilienceTests
                 var full=IceStrategyRules.Families.SelectMany(f=>Enumerable.Range(0,4).Select(i=>(JsonNode)new JsonObject{["id"]=$"held_{f}_{i}",["familia"]=f})).ToArray();
                 full[0]=core.DeepClone();
                 if(withShield) full[Array.FindIndex(full,c=>Cards.Family(c)=="aurora")]=shield.DeepClone();
-                return new JsonObject{["profundidad"]=depth,["reliquias"]=new JsonArray(full)};
+                return new JsonObject{["profundidad"]=depth,["llegada"]=new JsonObject{["reliquias"]=full.Length},["reliquias"]=new JsonArray(full)};
             }
             var held = SelectionRun(true);
             foreach (var method in new[] { "sima.reliquia", "sima.blason", "sima.guarda" })
@@ -91,7 +91,7 @@ static class ResilienceTests
             var firstShield = SelectionRun(false);
             check(Pilot.Rank(pilot.CardChoices([attack, shield, bounce], "sima.reliquia", firstShield))[0].Card.At("id").S() == "fu_cadena", "即使缺首盾，仍先选全体弹跳，防御只作补充");
             var shop = Fixture(); var sr = shop.At("sima", "run")!;
-            sr["heroes"] = new JsonArray(); sr["reliquias"] = held["reliquias"]!.DeepClone(); sr["lagrimas"] = 0;
+            sr["llegada"] = held["llegada"]!.DeepClone(); sr["heroes"] = new JsonArray(); sr["reliquias"] = held["reliquias"]!.DeepClone(); sr["lagrimas"] = 0;
             sr["mapa"]!["nodos"]!["room"]!["tipo"] = "chatarrero";
             sr["botin"] = new JsonObject { ["obolos"] = 100 };
             sr["tienda"] = new JsonObject { ["precio"] = 1, ["buffs"] = new JsonArray(defense.DeepClone(), shield.DeepClone(), attack.DeepClone(), bounce.DeepClone()) };

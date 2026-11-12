@@ -256,6 +256,7 @@ static class SelfTest
             ResourceJournalTests.Run(Assert);
             DamageBreakdownTests.Run(Assert, args);
             CardSelectionTests.Run(Assert);
+            UniversalOpeningTests.Run(Assert);
             IceOpeningTests.Run(Assert);
             FreezeCollectionTests.Run(Assert);
             FallbackSelectionTests.Run(Assert);

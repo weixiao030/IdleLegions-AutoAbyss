@@ -143,7 +143,7 @@ static class BattleJournalTests
 
         var legacy = new Pilot(); legacy.Config.StrategyId = 2;
         var targets = JsonNode.Parse("""
-        {"sima":{"run":{"id":"legacy","nodo":"fight","heroes":[{"id":"a","name":"A"},{"id":"b","name":"B"}],
+        {"sima":{"run":{"id":"legacy","nodo":"fight","llegada":{"reliquias":1},"reliquias":[{"id":"es_glaciar"}],"heroes":[{"id":"a","name":"A"},{"id":"b","name":"B"}],
           "mapa":{"nodos":{"fight":{"tipo":"combate"}}}}},
          "peeks":{"fight":{"enemigos":[{"name":"X"},{"name":"Y"}]}}}
         """)!;

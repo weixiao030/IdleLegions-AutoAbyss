@@ -57,7 +57,8 @@ static class CardFlowTests
                         }
                         else if (method == "sima.guarda")
                         {
-                            run["profundidad"] = 1; run["nodo"] = "start"; run["reliquias"] = new JsonArray(freeze.DeepClone());
+                            var selected = run.At("guardaPendiente", "cartas").A().Single(c => c.At("id").S() == command.At("args", "id").S());
+                            run["profundidad"] = 1; run["nodo"] = "start"; run["reliquias"] = new JsonArray(selected.DeepClone());
                             run["blasones"] = new JsonArray(); run["buffs"] = new JsonArray(); run["guardaPendiente"] = null;
                             run["llegada"] = new JsonObject { ["reliquias"] = 1, ["blasones"] = 0, ["buffs"] = 0 };
                         }
@@ -97,18 +98,18 @@ static class CardFlowTests
                 var review = session.At("chapterReviews").A().Single();
                 check(requests.SequenceEqual(["sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.reliquia", "sima.blason", "sima.guarda"]),
                     "四次冰遗物（普通冻结仅一份）、一次护盾兜底、徽章、继承七步真实派发；章末重推演仅本地执行不消费资源");
-                check(review.At("freezeInherited").B() && review.At("depth").N() == 1
-                    && review.At("relics").A().Select(c => c.S()).SequenceEqual(["es_carambano"])
+                check(!review.At("freezeInherited").B() && review.At("depth").N() == 1
+                    && review.At("relics").A().Select(c => c.S()).SequenceEqual(["es_helada"])
                     && review.At("prediction", "trials").N() == 64,
-                    "继承成功后按下一章确认保留的冻结重新推演64次并落盘，临时徽章已清空");
+                    "无冰川时继承有增益冰牌补冰4，按回执重新推演64次且不虚构冻结");
                 var status = JsonSerializer.SerializeToNode(pilot.Status(), J.Options);
-                check(status.At("cardState", "iceOnly").B() && status.At("cardState", "freezeInherited").B()
+                check(status.At("cardState", "iceOnly").B() && !status.At("cardState", "freezeInherited").B()
                     && status.At("choices").A().Single().At("method").S() == "local.chapterReview",
                     "控制台区分实际冻结继承与冰4前置，并显示章节复核，不残留上一章继承候选");
                 run["reliquiaOferta"] = new JsonArray(freeze.DeepClone(), bounce.DeepClone(), fire.DeepClone()); Publish();
                 await Step();
-                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 2,
-                    "真实Step继承一份普通冻结仍补冰4，只有冻结选项时允许增加羁绊张数");
+                check(run.At("reliquias").A().Count(c => c.At("id").S() == "es_carambano") == 1,
+                    "真实Step继承冰牌后仍补冰4，只有普通冻结时用它增加冰系张数");
                 run["blasonPendiente"] = null; run["reliquias"] = new JsonArray(freeze.DeepClone()); Publish();
                 var repeat = pilot.ReviewChapter(snapshot, CancellationToken.None);
                 snapshot["peeks"]!["start"]!["enemigos"] = JsonNode.Parse("""[{"name":"Stale boss"},{"name":"Stale escort"}]""");
@@ -138,6 +139,8 @@ static class CardFlowTests
                         Search = new() { Iterations = 8, AdaptiveIterations = 8, NeuralIterations = 8,
                             Horizon = 2, Workers = 1, AutoTrain = false } });
                     run["blasonPendiente"] = null; run["guardaPendiente"] = null;
+                    run["reliquias"] = new JsonArray(JsonNode.Parse("{\"id\":\"es_glaciar\",\"familia\":\"escarcha\"}"));
+                    run["llegada"] = new JsonObject { ["reliquias"] = 1 };
                     run["reliquiaOferta"] = new JsonArray(bounce.DeepClone()); Publish();
                     int priorRequests = requests.Count;
                     await (Task)typeof(Pilot).GetMethod("Step", BindingFlags.NonPublic | BindingFlags.Instance)!

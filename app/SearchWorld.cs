@@ -37,14 +37,15 @@ sealed class SearchWorld
     }
     internal static Choice[] CardsFor(JsonNode[] offered, string method, JsonNode run, Settings cfg)
     {
+        if (!OpeningRules.Complete(run, cfg)) return OpeningRules.Choices(offered, method, run, cfg);
         var legal = offered.Where(CardRules.Available).ToArray();
         if (method == "sima.guarda")
         {
             var uncapped = legal.Where(c => c.At("llevas").N() < 3 && Cards.Inherited(run).Count(x => x.At("id").S() == c.At("id").S()) < 3).ToArray();
             if (uncapped.Length > 0) legal = uncapped;
         }
-        // No ice-only acquisition, family priority, or manual card priority is
-        // used by strategies 5–7. Legality comes from the received game menu.
+        // After the shared inherited glacier/four-ice opening, strategies 5–7
+        // compare all legal builds without family or custom card priorities.
         return legal.Select(c => new Choice((method == "sima.guarda" ? "继承：" : method == "sima.blason" ? "徽章：" : "选牌：") + CardCatalog.Name(c),
             method, new() { ["id"] = c.At("id").S() }, core: Cards.IsCore(c, cfg), card: c)).ToArray();
     }
@@ -81,9 +82,9 @@ sealed class SearchWorld
                     options.Add(new("商店：" + J.Name(service), "sima.trade", new() { ["oferta"] = offer }));
             }
             if (run.At("tienda", "precio").N(double.MaxValue) <= money)
-                foreach (var card in run.At("tienda", "buffs").A().Where(CardRules.Available))
-                    if (!Bought("buff:" + card.At("id").S()))
-                        options.Add(new("商店：" + CardCatalog.Name(card), "sima.trade", new() { ["oferta"] = "buff:" + card.At("id").S() }, card: card));
+                foreach (var choice in CardsFor(run.At("tienda", "buffs").A().Where(c => !Bought("buff:" + c.At("id").S())).ToArray(), "sima.trade", run, cfg))
+                    options.Add(new("商店：" + choice.Label, "sima.trade", new() { ["oferta"] = "buff:" + choice.Card.At("id").S() },
+                        choice.Benefit, choice.Risk, choice.Core, choice.Priority, choice.Card) { Reason = choice.Reason });
         }
         var destinations = run.At("destinos").A().Select(x => x.S()).Where(x => x != "").ToArray();
         var preferred = destinations.Where(dest => (cfg.AllowElite || run.At("mapa", "nodos", dest, "tipo").S() != "elite")

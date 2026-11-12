@@ -11,7 +11,7 @@ export const categoryOrderFor=(value,family)=>value?.categoryOrder?.[family]||re
 export function preferenceFor(value,id) {
   return {...defaultPreference,priority:reference.cardPriority[id]??999,mode:reference.cardMode[id]??'normal',...value?.cards?.[id]};
 }
-export const fixedOpening = '优先取得并继承冰川（冻结＋全体弹跳）；没有冰川时先补冰系至4张，普通冻结不重复置顶。随后补齐七系各4张，已满系列让位；全部达标后忽略系列排序，按单卡新增收益比较。本层获取与章末继承分别计数，徽章不占遗物张数。';
+export const fixedOpening = '全部策略优先冰川（单卡冻结＋全体弹跳）；没有冰川就凑冰系4张，不单独追普通冻结。确认继承冰川或4张冰系遗物后才启用对应策略，本层临时效果不代表继承完成。随后补齐七系各4张，已满系列让位；全部达标后忽略系列排序，按单卡新增收益比较。本层获取与章末继承分别计数，徽章不占遗物张数。';
 export function defaults() {
   return {selectionMode:'adaptive',familyOrder:[...reference.familyOrder], categoryOrder:structuredClone(reference.categoryOrder), cards:{}, avoidOwnedEffects:true, lightFervorOnly:false};
 }

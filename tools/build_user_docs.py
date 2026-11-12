@@ -139,7 +139,7 @@ def build(source):
     style.paragraph_format.space_before = Pt(0)
     hdr = section.header.paragraphs[0]
     hdr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    hdr.add_run('IdleLegions自动下井  1.5.1')
+    hdr.add_run('IdleLegions自动下井  1.5.2')
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
     footer.add_run('第 ')
@@ -183,7 +183,7 @@ def build(source):
             p.paragraph_format.page_break_before = True
             pending_page_break = False
     doc.core_properties.title = lines[0].lstrip('# ')
-    doc.core_properties.subject = 'IdleLegions自动下井1.5.1用户文档'
+    doc.core_properties.subject = 'IdleLegions自动下井1.5.2用户文档'
     doc.core_properties.author = 'IdleLegions-AutoAbyss'
     doc.core_properties.language = 'zh-CN'
     destination = source.with_suffix('.docx')

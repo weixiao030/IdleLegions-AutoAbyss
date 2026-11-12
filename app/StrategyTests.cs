@@ -59,7 +59,7 @@ static class StrategyTests
         Paths.Data = Path.Combine(iceOriginalData, "classic-isolation");
         var icePilot = new Pilot();
         icePilot.Save(new Settings { StrategyId = 2, SkipShieldCardsEarly = false });
-        var v131Run = new JsonObject { ["profundidad"] = 8, ["reliquias"] = new JsonArray(glacier.DeepClone()) };
+        var v131Run = new JsonObject { ["llegada"] = new JsonObject { ["reliquias"] = 1 }, ["profundidad"] = 8, ["reliquias"] = new JsonArray(glacier.DeepClone()) };
         check(Pilot.Rank(icePilot.CardChoices([crit, slow, shield], "sima.reliquia", v131Run))[0].Card!.At("id").S() == "au_alba", "策略二保留v1.3.1已有冻结后首张护盾优先顺序");
 
         }
@@ -108,12 +108,14 @@ static class StrategyTests
             foreach(var method in new[]{"sima.reliquia","sima.blason","sima.guarda"})
             {
                 run["reliquias"] = new JsonArray(glacier.DeepClone());
+                run["llegada"] = new JsonObject { ["reliquias"] = 1 };
                 var allowed=pilot.CardChoices(prohibited.Append(described).Append(localized).Append(lightning).ToArray(),method,run);
                 check(allowed.Length==1 && allowed[0].Card.At("id").S()=="fu_cadena",method+"按独立开关排除普攻点燃带电，关闭构筑偏好仍有效，已继承冻结后电系弹跳允许");
             }
             var fallback=pilot.CardChoices(prohibited,"sima.reliquia",new JsonObject());
             check(fallback.Length==prohibited.Length && fallback.All(c=>c.Label.Contains("兜底")),"只有策略避让牌时恢复实际候选并记录兜底，不暂停");
             var store=JsonNode.Parse("""{"sima":{"run":{"nodo":"shop","reliquias":[{"id":"es_glaciar"},{"id":"au_alba"}],"mapa":{"nodos":{"shop":{"tipo":"chatarrero"},"next":{"tipo":"santuario"}}},"destinos":["next"],"botin":{"obolos":100},"tienda":{"precio":1}}}}""")!;
+            store["sima"]!["run"]!["llegada"] = new JsonObject { ["reliquias"] = 2 };
             store["sima"]!["run"]!["tienda"]!["buffs"]=new JsonArray(prohibited.Append(described).Append(shield).Select(c=>c.DeepClone()).ToArray());
             cfg.AllowBasicBurn=false; pilot.Save(cfg);
             var shop=pilot.Build(store).Where(c=>c.Method=="sima.trade").ToArray();

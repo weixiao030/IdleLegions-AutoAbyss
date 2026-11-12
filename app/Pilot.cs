@@ -14,7 +14,7 @@ sealed class Pilot
     int ModelBattles => Config.StrategyId == 2 ? legacySim.Battles : sim.Battles;
     double ModelLastLoss => Config.StrategyId == 2 ? legacySim.LastLoss : sim.LastLoss;
     void Learn(JsonNode? snapshot) { sim.Learn(snapshot); if (Config.StrategyId == 2) legacySim.Learn(snapshot); learning.Observe(snapshot.At("sima", "run")); }
-    void Evaluate(Choice[] candidates, JsonNode snapshot, Settings config, CancellationToken ct) { if (config.StrategyId == 2) legacySim.Evaluate(candidates, snapshot, config, ct); else sim.Evaluate(candidates, snapshot, config, ct); }
+    void Evaluate(Choice[] candidates, JsonNode snapshot, Settings config, CancellationToken ct) { if (OpeningRules.UsesLegacy(config, snapshot.At("sima", "run"))) legacySim.Evaluate(candidates, snapshot, config, ct); else sim.Evaluate(candidates, snapshot, config, ct); }
     readonly SemaphoreSlim operation = new(1, 1);
     readonly ConcurrentQueue<object> logs = new();
     CancellationTokenSource? cancel;
@@ -86,7 +86,7 @@ sealed class Pilot
             foreach (var h in root.At("heroes").A()) foreach (var skill in h.At("skills").A()) if (skill is JsonObject sk) { sk.Remove("conds"); sk.Remove("focusOpts"); sk.Remove("pvpDesc"); }
         }
         var runState = s.At("sima", "run");
-        return new { appVersion = Branding.Version, bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = SynergySelection.Uses(Config) ? !SynergySelection.OpeningComplete(runState, Config) : Config.StrategyId == 2 && CardRules.SeekingInheritedFreeze(runState, Config), openingComplete = SynergySelection.Uses(Config) && SynergySelection.OpeningComplete(runState, Config), freezeInherited = CardRules.HasInheritedCore(runState, Config), retainedFreeze = runState != null && Cards.Inherited(runState).Concat(Cards.RetainedBadges(runState, Cards.Inherited(runState))).Any(c => Cards.IsCore(c, Config)), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = SynergySelection.Uses(Config) ? SynergySelection.Target : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), resourceRounds = ResourceJournal.Rounds(receipts, roundResults.ToArray()), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason, c.Search }), learning = learning.Status(), searchHardware = SearchHardware.Current, logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
+        return new { appVersion = Branding.Version, bridge = new { version = s.At("version").S(), bundledVersion = FrostAbyss.Bridge.BundledVersion, updateRequired = FrostAbyss.Bridge.NeedsUpdate(s) }, cardState = new { iceOnly = !OpeningRules.Complete(runState, Config), openingComplete = OpeningRules.Complete(runState, Config), inheritedIceCount = OpeningRules.InheritedBuild(runState).Count(c => Cards.Family(c) == "escarcha"), glacierInherited = OpeningRules.InheritedBuild(runState).Any(c => SynergySelection.Glacier(c, Config)), bounceInherited = OpeningRules.Bounce(OpeningRules.InheritedBuild(runState)), freezeInherited = OpeningRules.Freeze(OpeningRules.InheritedBuild(runState), Config), retainedFreeze = runState != null && Cards.Inherited(runState).Concat(Cards.RetainedBadges(runState, Cards.Inherited(runState))).Any(c => Cards.IsCore(c, Config)), inheritedCount = CardRules.InheritedBaseline(runState).Length, series = IceStrategyRules.Progress(runState, Config), targetSeries = SynergySelection.Uses(Config) ? SynergySelection.Target : 0 }, active = Active, phase, message = GameText.Text(message), connected = Bridge.Fresh(s) && s.At("loggedIn").B(), bridgeConnected = Bridge.Fresh(s), config = Config, snapshot = slim, battles = BattleJournal.Summarize(battleRecords), resourceRounds = ResourceJournal.Rounds(receipts, roundResults.ToArray()), equipment = DropJournal.Records(receipts), acquisitions = receipts.Select(x => JsonSerializer.SerializeToNode(x, J.Options)).Where(x => x.At("cardId").S() != "").ToArray(), choices = choices.Select(c => new { Label = GameText.Text(c.Label), c.Method, c.Args, c.Forecast, c.Core, c.Priority, c.Reason, c.Search }), learning = learning.Status(), searchHardware = SearchHardware.Current, logs = logs.ToArray().Reverse(), runs, loop = new { mode = Config.LoopUntilRopesEmpty ? "ropes" : "count", target = Config.MaxRuns, completed = runs, sessionOpen, rounds = roundResults.ToArray() }, decisions, reportPath, model = new { battles = ModelBattles, lastLoss = ModelLastLoss, kind = "游戏回执 + 本地推演", caveat = "逐角色输出以服务端战斗回执为准；伤害来源、掉落与装备仅在回执实际提供时统计。预测区间不包含模型误差。" }, dataPath = Paths.Data, recordedBattles = battleRecords.Count, skillBackup = File.Exists(Path.Combine(Paths.Data, "skills-backup.json")) };
     }
     public void Pause() { if (!Active) return; cancel?.Cancel(); phase = "正在暂停"; message = "等待当前操作回执后停止，不会再派发新操作。"; }
     public void Start(bool preview = false, LoopRequest? loop = null)
@@ -163,18 +163,18 @@ sealed class Pilot
         var candidates = Build(s!);
         if (candidates.Length == 0) throw new Exception("当前房间没有已识别的合法操作，请在游戏中查看状态后继续。");
         phase = "本地推演中"; message = $"比较 {candidates.Length} 个候选，每候选 {Config.Simulations:N0} 次。";
-        if (Config.StrategyId < 5 && run != null && !candidates.All(c => c.Method == "sima.tear")) Evaluate(candidates, s!, Config, ct);
+        if (!OpeningRules.UsesSearch(Config, run) && run != null && !candidates.All(c => c.Method == "sima.tear")) Evaluate(candidates, s!, Config, ct);
         // Money has no reserve target. Compare a purchase with no purchase in
         // the same future encounter before allowing a shop exit to compete.
         var purchases = candidates.Where(c => c.Method == "sima.trade").ToArray();
         Forecast? noBuy = null;
-        if (Config.StrategyId < 5 && purchases.Any(c => c.Card != null) && run != null)
+        if (!OpeningRules.UsesSearch(Config, run) && purchases.Any(c => c.Card != null) && run != null)
         {
             var baseline = new Choice("不购买的战斗基线", "local.shopBaseline", new(), card: new JsonObject());
             Evaluate([baseline], s!, Config, ct);
             noBuy = baseline.Forecast;
         }
-        if (Config.StrategyId >= 5 && run != null)
+        if (OpeningRules.UsesSearch(Config, run))
         {
             phase = candidates.Length == 1 ? "核验唯一操作" : "树搜索中";
             message = candidates.Length == 1 ? "只有一个合法操作，跳过无分支搜索；继续核验预测与回执。"
@@ -184,7 +184,7 @@ sealed class Pilot
             // Forecast is a separate combat audit; it never reranks tree results.
             Evaluate([choices[0]], s!, Config, ct);
         }
-        else choices = Rank(Config.StrategyId == 2 ? Legacy131.Selection.BeforeShopExit(candidates, noBuy) : BeforeShopExit(candidates, noBuy));
+        else choices = Rank(OpeningRules.UsesLegacy(Config, run) ? Legacy131.Selection.BeforeShopExit(candidates, noBuy) : BeforeShopExit(candidates, noBuy));
         var pick = choices[0];
         decisions++;
         if (preview) { phase = "推演完成"; message = "建议：" + pick.Label + "。未执行游戏操作。"; Note(message); return; }
@@ -324,7 +324,7 @@ sealed class Pilot
         {
             throw new Exception("生命低于自定义暂停线，已暂停并保留深渊进度。撤离已禁止。");
         }
-        if (Config.StrategyId >= 5) return SearchWorld.LegalActions(s, Config);
+        if (OpeningRules.UsesSearch(Config, run)) return SearchWorld.LegalActions(s, Config);
         if (!done && ShouldPact(run, Config) && (type is "combate" or "elite" or "jefe" || type == "osario" && nd.At("emboscada").B()))
             return [new("有冻结，缔结契约：" + J.Name(run.At("pacto")), "sima.pacto", new(), .5, .4)];
         if (type == "presagio" && !done)
@@ -349,7 +349,7 @@ sealed class Pilot
             }
             if (run.At("tienda", "precio").N(double.MaxValue) <= obols)
             {
-                if (Config.StrategyId == 2) shop.AddRange(Legacy131.Selection.ShopCards(run, Config, completed));
+                if (OpeningRules.UsesLegacy(Config, run)) shop.AddRange(Legacy131.Selection.ShopCards(run, Config, completed));
                 else
                 {
                 var shopOffers = run.At("tienda", "buffs").A().Where(CardRules.Available).Where(card =>
@@ -416,6 +416,7 @@ sealed class Pilot
     }
     internal Choice[] CardChoices(JsonNode[] cards, string method, JsonNode run)
     {
+        if (!OpeningRules.Complete(run, Config)) return OpeningRules.Choices(cards, method, run, Config);
         if (Config.StrategyId >= 5) return SearchWorld.CardsFor(cards, method, run, Config);
         if (Config.StrategyId == 4) return CustomStrategy.Choices(cards, method, run, Config);
         if (Config.StrategyId == 2) return Legacy131.Selection.CardChoices(cards, method, run, Config);
@@ -523,7 +524,7 @@ sealed class Pilot
             && run.At("mapa", "nodos", id, "tipo").S() is "combate" or "elite" or "jefe"
             && !peek.At("enemigos").A().Any();
     }
-    internal Choice[] FightChoices(JsonNode s, JsonNode run, string id) => Config.StrategyId == 2 ? Legacy131.Selection.FightChoices(s, run, id) : TargetRules.Choices(s, run, id, Config.SeparateTargets);
+    internal Choice[] FightChoices(JsonNode s, JsonNode run, string id) => OpeningRules.UsesLegacy(Config, run) ? Legacy131.Selection.FightChoices(s, run, id) : TargetRules.Choices(s, run, id, Config.SeparateTargets);
     JsonNode[] Team(JsonNode s)
     {
         return FormationRules.ResolveHeroes(Config.Formation, s);

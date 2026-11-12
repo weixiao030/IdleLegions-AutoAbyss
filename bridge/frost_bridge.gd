@@ -3,7 +3,7 @@ extends Node
 const DIR: String = "user://frost_abyss"
 const CFG: String = "user://ventana_inicio.cfg"
 const LINE: String = "FrostAbyss=\"*user://frost_abyss/frost_bridge.gd\""
-const VERSION: String = "0.3.6"
+const VERSION: String = "0.3.7"
 const SECRET_FIELDS: Array = ["token", "password", "pass", "ticket", "authorization", "secret", "api_key", "apikey"]
 const ACTIONS: Array = ["sima.enter", "sima.move", "sima.fight", "sima.open", "sima.reliquia", "sima.blason", "sima.guarda", "sima.rest", "sima.trade", "sima.omen", "sima.tear", "sima.pacto"]
 var game: Node
@@ -26,6 +26,9 @@ var receipt: Dictionary = {}
 var cache_run: String = ""
 var last_battle: Dictionary = {}
 var last_loot: Dictionary = {}
+var server_authenticated: bool = false
+var authenticated_socket: Variant = null
+var auth_attempt_socket: Variant = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -39,9 +42,12 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	if elapsed < 0.4 or busy:
+	if elapsed < 0.4:
 		return
 	elapsed = 0.0
+	if busy:
+		_snapshot()
+		return
 	_tick()
 
 func _tick() -> void:
@@ -71,14 +77,62 @@ func _tick() -> void:
 			_snapshot()
 	if not _state().is_empty() and Time.get_ticks_msec() - last_read > 5000 and not _fighting():
 		last_read = Time.get_ticks_msec()
-		var r: Dictionary = await net.call("request", "sima.get", {})
-		if r.get("ok", false) and r.get("data") is Dictionary:
-			sima = r["data"]
-		else:
-			last_error = str(r.get("error", "sima.get failed"))
+		await _refresh_authenticated()
 	_ensure_cfg()
 	busy = false
 	_snapshot()
+
+func _server_logged_in() -> bool:
+	return server_authenticated and not _state().is_empty() and net != null and bool(net.call("is_open")) and net.get("socket") == authenticated_socket
+
+func _authentication_required(r: Dictionary) -> bool:
+	return not r.get("ok", false) and (str(r.get("error", "")) in ["请先登录", "请先登录游戏", "Inicia sesión primero", "Debes iniciar sesión primero"] or str(r.get("code", "")) in ["not_authenticated", "unauthenticated", "auth_required"])
+
+func _refresh_authenticated(clear_peeks: bool = false) -> Dictionary:
+	# Reconnect only through the game's official auth path. Never replay actions.
+	if net == null or not bool(net.call("is_open")):
+		server_authenticated = false
+		last_error = "游戏连接中断，等待重新连接"
+		return {"ok": false, "error": last_error}
+	var current_socket: Variant = net.get("socket")
+	var invalidate_peeks: bool = clear_peeks or current_socket != authenticated_socket
+	var r: Dictionary = await net.call("request", "sima.get", {})
+	if current_socket != net.get("socket") or not bool(net.call("is_open")):
+		server_authenticated = false
+		return {"ok": false, "error": "连接已变化，等待新会话同步"}
+	if _authentication_required(r):
+		invalidate_peeks = true
+		server_authenticated = false
+		last_error = "游戏会话失效，正在恢复登录"
+		var current_token: String = str(game.get("token")) if game != null else ""
+		# One attempt per WebSocket; expired credentials must use normal login.
+		if current_token != "" and current_socket != null and current_socket != auth_attempt_socket:
+			auth_attempt_socket = current_socket
+			var login: Dictionary = await net.call("request", "auth.token", {"token": current_token})
+			if current_socket != net.get("socket") or not bool(net.call("is_open")):
+				return {"ok": false, "error": "连接已变化，等待新会话同步"}
+			var data: Variant = login.get("data")
+			if not login.get("ok", false) or not data is Dictionary or str(data.get("token", "")) == "" or not data.get("state") is Dictionary or data["state"].is_empty():
+				last_error = "游戏会话恢复失败，请在游戏中重新登录"
+				return {"ok": false, "error": last_error}
+			game.call("apply_login", data)
+			r = await net.call("request", "sima.get", {})
+	if current_socket != net.get("socket") or not bool(net.call("is_open")):
+		server_authenticated = false
+		return {"ok": false, "error": "连接已变化，等待新会话同步"}
+	if r.get("ok", false) and r.get("data") is Dictionary:
+		sima = r["data"].duplicate(true)
+		if invalidate_peeks:
+			peeks.clear()
+		server_authenticated = true
+		authenticated_socket = current_socket
+		last_error = ""
+		if is_instance_valid(panel):
+			panel.set("_data", sima.duplicate(true))
+	else:
+		server_authenticated = false
+		last_error = str(r.get("error", "sima.get failed"))
+	return r
 
 func _capture() -> void:
 	if waiting_id < 0:
@@ -145,13 +199,9 @@ func _command(cmd: Dictionary) -> Dictionary:
 	if _state().is_empty():
 		return {"ok": false, "error": "请先登录游戏"}
 	if method == "local.refresh":
-		var refreshed: Dictionary = await net.call("request", "sima.get", {})
-		if refreshed.get("ok", false) and refreshed.get("data") is Dictionary:
-			sima = refreshed["data"].duplicate(true)
-			peeks.clear()
-			if is_instance_valid(panel):
-				panel.set("_data", sima.duplicate(true))
-		return _clean(refreshed)
+		return _clean(await _refresh_authenticated(true))
+	if not _server_logged_in():
+		return {"ok": false, "retryable": true, "error": "会话尚未同步，本次操作尚未发出"}
 	if _fighting():
 		return {"ok": false, "error": "战斗仍在播放"}
 	if method == "hero.setSkills":
@@ -334,7 +384,7 @@ func _snapshot() -> void:
 	if rid != cache_run:
 		peeks.clear()
 		cache_run = rid
-	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": not st.is_empty(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "lastLoot": last_loot, "error": last_error, "lastCommand": response, "lastAction": last_action, "journal": journal})
+	_save("snapshot.json", {"version": VERSION, "seq": seq, "pid": OS.get_process_id(), "time": Time.get_unix_time_from_system(), "loggedIn": _server_logged_in(), "fighting": _fighting(), "busy": busy, "active": active, "sima": sima, "peeks": peeks, "omen": omen, "heroes": heroes, "team": st.get("team", []), "defs": defs, "tacticasCatalogo": st.get("tacticasCatalogo", {}), "lastBattle": last_battle, "lastLoot": last_loot, "error": last_error, "lastCommand": response, "lastAction": last_action, "journal": journal})
 
 func _clean(v: Variant) -> Variant:
 	if v is Dictionary:
