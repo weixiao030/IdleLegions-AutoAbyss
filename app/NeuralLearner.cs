@@ -43,6 +43,7 @@ sealed class NeuralLearner
     internal Frozen Capture() => new(Volatile.Read(ref active));
     internal bool Ready => Volatile.Read(ref active).Version > 0;
     internal int Version => Volatile.Read(ref active).Version;
+    internal bool TrainingActive => training is { IsCompleted: false };
     internal NeuralLearner(string root, Func<Network, CudaTraining>? cudaFactory = null)
     {
         this.root = root;
@@ -111,11 +112,11 @@ sealed class NeuralLearner
     void Train(int epochs, int seed, string trainingDevice)
     {
         var dir = Path.Combine(root, "decisions"); var rows = new List<LearningDecision>();
-        foreach (var file in Directory.Exists(dir) ? Directory.GetFiles(dir, "*.json").Order(StringComparer.Ordinal) : Enumerable.Empty<string>())
+        foreach (var file in J.HistoryFiles(dir).Order(StringComparer.Ordinal))
         {
             try
             {
-                var r = JsonSerializer.Deserialize<LearningDecision>(File.ReadAllText(file), J.Options);
+                var r = J.ReadAs<LearningDecision>(file);
                 if (r != null && Usable(r)) rows.Add(r);
             }
             catch (Exception e) when (e is IOException or JsonException) { }

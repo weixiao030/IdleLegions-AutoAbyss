@@ -8,13 +8,14 @@ sealed class Pilot
 {
     public readonly Bridge Bridge = new();
     public Settings Config { get; private set; }
-    readonly Simulation sim = new(false);
-    readonly SearchMemory learning = new();
-    readonly Legacy131.Simulation legacySim = new();
-    int ModelBattles => Config.StrategyId == 2 ? legacySim.Battles : sim.Battles;
-    double ModelLastLoss => Config.StrategyId == 2 ? legacySim.LastLoss : sim.LastLoss;
-    void Learn(JsonNode? snapshot) { sim.Learn(snapshot); if (Config.StrategyId == 2) legacySim.Learn(snapshot); learning.Observe(snapshot.At("sima", "run")); }
-    void Evaluate(Choice[] candidates, JsonNode snapshot, Settings config, CancellationToken ct) { if (OpeningRules.UsesLegacy(config, snapshot.At("sima", "run"))) legacySim.Evaluate(candidates, snapshot, config, ct); else sim.Evaluate(candidates, snapshot, config, ct); }
+    Simulation sim = new(false);
+    SearchMemory learning = new();
+    Lazy<Legacy131.Simulation> legacySim = new(() => new());
+    readonly DataStorage storage = new();
+    int ModelBattles => Config.StrategyId == 2 ? (legacySim.IsValueCreated ? legacySim.Value.Battles : 0) : sim.Battles;
+    double ModelLastLoss => Config.StrategyId == 2 ? (legacySim.IsValueCreated ? legacySim.Value.LastLoss : .18) : sim.LastLoss;
+    void Learn(JsonNode? snapshot) { sim.Learn(snapshot); if (Config.StrategyId == 2) legacySim.Value.Learn(snapshot); learning.Observe(snapshot.At("sima", "run")); }
+    void Evaluate(Choice[] candidates, JsonNode snapshot, Settings config, CancellationToken ct) { if (OpeningRules.UsesLegacy(config, snapshot.At("sima", "run"))) legacySim.Value.Evaluate(candidates, snapshot, config, ct); else sim.Evaluate(candidates, snapshot, config, ct); }
     readonly SemaphoreSlim operation = new(1, 1);
     readonly ConcurrentQueue<object> logs = new();
     CancellationTokenSource? cancel;
@@ -42,6 +43,37 @@ sealed class Pilot
     bool sessionOpen;
     readonly HashSet<string> skippedReplays = [];
     public bool Active => Volatile.Read(ref running) == 1;
+    public object StorageStatus() => storage.Status();
+    public void Maintain(StorageRequest request)
+    {
+        if (learning.Neural.TrainingActive) throw new Exception("网络正在训练，请等待训练完成后维护数据。");
+        storage.Validate(request);
+        if (Interlocked.CompareExchange(ref running, 1, 0) != 0) throw new Exception("请先暂停下潜，等待当前操作结束后维护数据。");
+        cancel = new();
+        worker = Task.Run(() =>
+        {
+            try
+            {
+                phase = "数据维护中";
+                message = storage.Run(request, cancel.Token);
+                phase = "维护完成"; Note(message);
+            }
+            catch (OperationCanceledException) { phase = "已暂停"; message = "数据维护已暂停，已处理的文件保留。"; }
+            catch (Exception e) { phase = "需要处理"; message = e.Message; }
+            finally
+            {
+                if (request.Action == "delete" && request.Groups?.Any(g => g is "battles" or "decisions") == true)
+                {
+                    // Recreate all indexes after deletions, including a partially
+                    // completed deletion. Published neural weights remain on disk.
+                    sim = new(false); learning = new(); legacySim = new(() => new());
+                }
+                if (request.Action == "delete" && request.Groups?.Contains("session") == true) { receipts.Clear(); battleRecords.Clear(); roundResults.Clear(); }
+                if (request.Action == "delete" && request.Groups?.Contains("reports") == true) reportPath = "";
+                Volatile.Write(ref running, 0);
+            }
+        });
+    }
     public object LatestReport() => reportPath != "" && File.Exists(reportPath) ? new { name = Path.GetFileName(reportPath), text = ResourceJournal.RefreshReport(File.ReadAllText(reportPath), receipts, roundResults.ToArray()) } : throw new Exception("尚未生成报告。");
     public Pilot()
     {

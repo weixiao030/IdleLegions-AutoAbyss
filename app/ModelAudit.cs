@@ -20,7 +20,7 @@ static class ModelAudit
         int trials = int.Parse(Arg("--audit-trials", "2000")), limit = int.Parse(Arg("--audit-max", int.MaxValue.ToString()));
         if (trials <= 0 || limit < 2) throw new Exception("历史验证需要正数抽样次数和至少两场战斗。");
         string input = Arg("--audit-input", Path.Combine(Paths.Data, "battles"));
-        var source = Directory.GetFiles(input, "*.json", SearchOption.AllDirectories).Select(J.Read)
+        var source = J.HistoryFiles(input, SearchOption.AllDirectories).Select(J.Read)
             .Select(x => x.At("authoritativeBattle") ?? x).Where(x => x.At("before") != null && x.At("result") != null)
             .GroupBy(x => x.At("commandId").S(x.At("time").S()) + ":" + x.At("before", "id").S()).Select(g => g.First()!)
             .OrderBy(x => x.At("time").N()).TakeLast(limit).ToArray();

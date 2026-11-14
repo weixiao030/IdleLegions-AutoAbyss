@@ -25,8 +25,23 @@ sealed class Choice(string label, string method, JsonObject args, double benefit
 // displayed descriptions and explicitly uncertain timing/scaling are used here.
 sealed class Simulation
 {
-    record Profile(string Key, string Kind, double Hp, double Dps, double Interval, double Aoe, int Row, int Depth);
-    record HeroProfile(double Hit, double Interval, double HealRate, double FireRate, double LightningRate, double AccountAttack = 0);
+    internal sealed record Profile(string Key, string Kind, double Hp, double Dps, double Interval, double Aoe, int Row, int Depth);
+    internal sealed record HeroProfile(double Hit, double Interval, double HealRate, double FireRate, double LightningRate, double AccountAttack = 0);
+    internal sealed record State(Profile[] Enemies, Dictionary<string, HeroProfile> Heroes, string[] Observed, int Battles, double LastLoss);
+    internal State CaptureState()
+    {
+        lock (modelGate) return new(enemies.ToArray(), new(heroes), observed.ToArray(), Battles, LastLoss);
+    }
+    internal void RestoreState(State state)
+    {
+        lock (modelGate)
+        {
+            enemies.Clear(); enemies.AddRange(state.Enemies); heroes.Clear();
+            foreach (var pair in state.Heroes) heroes.Add(pair.Key, pair.Value);
+            observed.Clear(); observed.UnionWith(state.Observed); profileCache.Clear();
+            Battles = state.Battles; LastLoss = state.LastLoss;
+        }
+    }
     record Skill(double Mult, double Cooldown, string Element, bool Aoe, string Focus, string Cond, double Value, double Cost, bool Heal, bool Freezes);
     readonly object modelGate = new();
     readonly List<Profile> enemies = [];
@@ -49,7 +64,7 @@ sealed class Simulation
     public Simulation(bool load = true)
     {
         var dir = Path.Combine(Paths.Data, "battles");
-        if (load && Directory.Exists(dir)) foreach (var file in Directory.GetFiles(dir, "*.json").OrderBy(x => J.Read(x).At("time").N()).TakeLast(250))
+        if (load && Directory.Exists(dir)) foreach (var file in J.HistoryFiles(dir).OrderBy(x => J.Read(x).At("time").N()).TakeLast(250))
             Learn(new JsonObject { ["lastBattle"] = J.Read(file) }, false);
     }
     static string Key(JsonNode? e) => e.At("char").S() + ":" + e.At("variant").S("0");
@@ -371,10 +386,12 @@ sealed class Simulation
                         if(eh[e]<=0){hp[hero]=Math.Min(projectedMax[hero],hp[hero]+fx.KillHeal*projectedMax[hero]);immune[hero]=now+fx.KillImmune;}
                     }
                     if(basic) next[hero]=now+interval[hero]/(1+fx.Speed);
-                    if(eh.All(v=>v<=0)){win=true;break;}
+                    bool allDead = true;
+                    for (int e = 0; e < m; e++) if (!(eh[e] <= 0)) { allDead = false; break; }
+                    if(allDead){win=true;break;}
                 }
-                var outcomeState = new CombatState(hp.Select(v => Math.Max(0,v)).ToArray(), mana.ToArray());
-                if (win) winState = outcomeState; else lossState = outcomeState;
+                var outcomeState = win ? winState ??= new(new double[n], new double[n]) : lossState ??= new(new double[n], new double[n]);
+                for (int h = 0; h < n; h++) { outcomeState.Hp[h] = Math.Max(0, hp[h]); outcomeState.Mana[h] = mana[h]; }
                 if(win)wins++;rem+=hp.Sum(x=>Math.Max(0,x))/Math.Max(1,projectedMax.Sum());
                 for (int h=0;h<n;h++) remaining[h]+=Math.Max(0,hp[h])/trials;
                 frozenSum+=freezeTime/Math.Max(.1,now);totalTime+=now;
@@ -389,7 +406,8 @@ sealed class Simulation
             });
         }
         }
-        Parallel.ForEach(work, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount/2, 1, 8) }, action => action());
+        if (work.Count == 1) work[0]();
+        else Parallel.ForEach(work, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount/2, 1, 8) }, action => action());
         if (choices.Any(c => c.Forecast is { } f && new[] { f.Win, f.Low, f.High, f.Hp, f.Score, f.Frozen, f.Duration }.Any(x => !double.IsFinite(x))))
             throw new Exception("当前参数导致模型无法产生有限结果，已暂停；请调整参数后继续。配置未被截断。");
     }

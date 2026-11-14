@@ -55,6 +55,7 @@ def fixture_pack(folder, files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game', type=Path, required=True)
+    parser.add_argument('--base-game', type=Path, help='沙盒覆盖目录缺少依赖时，从此原安装目录只读补齐 DLL')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
@@ -68,7 +69,10 @@ def main():
     runner.mkdir()
     extracted.mkdir()
     for name in ['client.exe', 'libgodotsteam.windows.template_release.x86_64.dll', 'steam_api64.dll']:
-        shutil.copy2(game / name, runner / name)
+        source = game / name
+        if not source.is_file() and name.endswith('.dll') and args.base_game:
+            source = args.base_game.resolve() / name
+        shutil.copy2(source, runner / name)
     config = dict(pack=pack.as_posix(), output=extracted.as_posix(), paths=[r['path'] for r in manifest['entries']])
     files = {
         'res://project.godot': b'config_version=5\n[application]\nconfig/name="IdleLegions Local Resource Reader"\nrun/main_scene="res://reader.tscn"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n',

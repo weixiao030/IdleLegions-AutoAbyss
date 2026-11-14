@@ -80,12 +80,14 @@ static class Program
                 if (c.Request.Headers["X-Frost-Key"] != key || c.Request.Headers["Origin"] is { } o && o != origin) { c.Response.StatusCode = 403; await Json(c, new { ok = false, error = "本地访问凭证无效，请从托盘重新打开控制台。" }); return; }
                 if (path == "/api/status" && c.Request.HttpMethod == "GET") { await Json(c, pilot.Status()); return; }
                 if (path == "/api/report" && c.Request.HttpMethod == "GET") { await Json(c, pilot.LatestReport()); return; }
+                if (path == "/api/storage" && c.Request.HttpMethod == "GET") { await Json(c, pilot.StorageStatus()); return; }
                 if (c.Request.HttpMethod != "POST") { c.Response.StatusCode = 405; return; }
                 if (c.Request.ContentLength64 > 65536) throw new Exception("请求过大。");
                 using var reader = new StreamReader(c.Request.InputStream, Encoding.UTF8);
                 var body = await reader.ReadToEndAsync();
                 switch (path)
                 {
+                    case "/api/storage": pilot.Maintain(JsonSerializer.Deserialize<StorageRequest>(body, J.Options) ?? throw new Exception("维护参数为空。")); break;
                     case "/api/formation":
                         pilot.SaveFormation(JsonSerializer.Deserialize<FormationRequest>(body, J.Options)?.Formation);
                         await Json(c, new { ok = true, config = pilot.Config }); return;

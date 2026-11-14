@@ -1,4 +1,4 @@
-// Frozen v1.3.1 simulation class; shared Choice/Forecast records keep the same schema.
+// v1.3.1 simulation formulas; history caching does not change its predictions.
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using FrostAbyss;
@@ -16,11 +16,26 @@ sealed class Simulation
     readonly HashSet<string> observed = [];
     public int Battles { get; private set; }
     public double LastLoss { get; private set; } = .18;
+    sealed record State(HistoryCache.Stamp[] Files, Profile[] Enemies, Dictionary<string, HeroProfile> Heroes, string[] Observed, int Battles, double LastLoss, Dictionary<string, double> Times);
     public Simulation(bool load = true)
     {
         var dir = Path.Combine(Paths.Data, "battles");
-        if (load && Directory.Exists(dir)) foreach (var file in Directory.GetFiles(dir, "*.json").OrderBy(x => J.Read(x).At("time").N()).TakeLast(250))
+        if (!load || !Directory.Exists(dir)) return;
+        var files = HistoryCache.Scan(dir);
+        string cacheFile = Path.Combine(Paths.Data, "cache", "legacy-model-v1.json");
+        var saved = HistoryCache.Read<State>(cacheFile);
+        if (saved?.Files != null && HistoryCache.Unchanged(saved.Files, files))
+        {
+            enemies.AddRange(saved.Enemies); foreach (var pair in saved.Heroes) heroes[pair.Key] = pair.Value;
+            observed.UnionWith(saved.Observed); Battles = saved.Battles; LastLoss = saved.LastLoss;
+            return;
+        }
+        var previous = saved?.Files?.ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase) ?? new();
+        var times = files.ToDictionary(f => f.Path, f => previous.TryGetValue(f.Path, out var old) && old == f && saved?.Times?.TryGetValue(f.Path, out var time) == true
+            ? time : J.Read(f.Path).At("time").N(), StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files.Select(f => f.Path).OrderBy(x => times[x]).TakeLast(250))
             Learn(new JsonObject { ["lastBattle"] = J.Read(file) }, false);
+        HistoryCache.Write(cacheFile, new State(files, enemies.ToArray(), new(heroes), observed.ToArray(), Battles, LastLoss, times));
     }
     static string Key(JsonNode? e) => e.At("char").S() + ":" + e.At("variant").S("0");
     static double Median(IEnumerable<double> x, double fallback = 0)

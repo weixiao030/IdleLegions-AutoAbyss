@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
+using System.IO.Compression;
 
 namespace FrostAbyss;
 
@@ -9,25 +10,60 @@ static class J
     public static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     public static JsonNode? At(this JsonNode? n, params string[] keys) { foreach (var k in keys) { n = n is JsonObject o ? o[k] : null; } return n; }
     public static string S(this JsonNode? n, string fallback = "") => n is JsonValue ? n.ToString() : fallback;
-    public static double N(this JsonNode? n, double fallback = 0) => double.TryParse(n.S(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && double.IsFinite(v) ? v : fallback;
-    public static bool B(this JsonNode? n) => n?.ToString() is "true" or "True";
+    public static double N(this JsonNode? n, double fallback = 0)
+    {
+        // Parsed JSON numbers already have a numeric representation. Avoid allocating
+        // a string and parsing it again for every event, hero and search feature.
+        if (n is JsonValue number)
+        {
+            if (number.TryGetValue<double>(out var d)) return double.IsFinite(d) ? d : fallback;
+            if (number.TryGetValue<int>(out var i)) return i;
+            if (number.TryGetValue<long>(out var l)) return l;
+        }
+        return double.TryParse(n.S(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && double.IsFinite(v) ? v : fallback;
+    }
+    public static bool B(this JsonNode? n) => n is JsonValue value && value.TryGetValue<bool>(out var b) ? b : n?.ToString() is "true" or "True";
     public static IEnumerable<JsonNode> A(this JsonNode? n) => n is JsonArray a ? a.OfType<JsonNode>() : [];
     public static JsonNode? Read(string path)
     {
         try
         {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var file = OpenRead(path);
             return JsonNode.Parse(file);
         }
         catch { return null; }
     }
+    internal static Stream OpenRead(string path)
+    {
+        if (!File.Exists(path) && File.Exists(path + ".gz")) path += ".gz";
+        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ? new GZipStream(file, CompressionMode.Decompress) : file;
+    }
+    internal static T? ReadAs<T>(string path)
+    {
+        using var file = OpenRead(path);
+        return JsonSerializer.Deserialize<T>(file, Options);
+    }
+    internal static string[] HistoryFiles(string directory, SearchOption option = SearchOption.TopDirectoryOnly) =>
+        Directory.Exists(directory) ? Directory.GetFiles(directory, "*.json*", option)
+            .Where(p => p.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".json.gz", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ? p[..^3] : p).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : [];
     public static void Write(string path, object? value)
     {
+        if (!File.Exists(path) && File.Exists(path + ".gz")) path += ".gz";
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temp, JsonSerializer.Serialize(value, Options), new UTF8Encoding(false));
+            using (var file = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                if (path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var gzip = new GZipStream(file, CompressionLevel.Fastest);
+                    JsonSerializer.Serialize(gzip, value, Options);
+                }
+                else JsonSerializer.Serialize(file, value, Options);
+            }
             // Godot briefly holds command.json without delete sharing. Retry only
             // this unpublished atomic rename, never a dispatched game operation.
             for (int attempt = 0; ; attempt++)

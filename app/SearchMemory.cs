@@ -43,6 +43,24 @@ sealed class SearchMemory
     readonly Dictionary<string, string> episodes = [];
     readonly HashSet<string> finishedEpisodes = [];
     readonly Dictionary<string, (int Count, double Predicted, double Actual)> calibration = [];
+    internal sealed record BattleCheckpoint(HistoryCache.Stamp[] Files, Simulation.State Model,
+        Dictionary<string, JsonNode> Cards, Dictionary<string, JsonNode> Maps, Dictionary<string, JsonNode> Shops,
+        string[] Seen, int Archived, double LastTime);
+    internal sealed class DecisionInfo
+    {
+        public string Id { get; set; } = "";
+        public string RunId { get; set; } = "";
+        public string EpisodeId { get; set; } = "";
+        public string NextRunId { get; set; } = "";
+        public bool Confirmed { get; set; }
+        public double? Return { get; set; }
+        public double? PredictedWin { get; set; }
+        public bool? Won { get; set; }
+        public string CalibrationKey { get; set; } = "";
+    }
+    internal sealed record IndexedDecision(HistoryCache.Stamp File, DecisionInfo? Info);
+    internal sealed record DecisionCheckpoint(IndexedDecision[] Rows);
+    readonly Dictionary<string, IndexedDecision> decisionIndex = new(StringComparer.OrdinalIgnoreCase);
     bool loaded;
     int archived, decisions, confirmed;
     volatile object summary = new { loaded = false };
@@ -87,39 +105,82 @@ sealed class SearchMemory
     internal void EnsureLoaded(Simulation? allDataModel, CancellationToken ct)
     {
         if (loaded) return;
+        ct.ThrowIfCancellationRequested();
         string directory = Path.Combine(Paths.Data, "battles"); var seen = new HashSet<string>();
-        var battleFiles = Directory.Exists(directory) ? Directory.GetFiles(directory, "*.json", SearchOption.AllDirectories) : [];
+        var files = HistoryCache.Scan(directory, SearchOption.AllDirectories);
+        string cacheFile = Path.Combine(root, "cache", "battle-model-v1.json");
+        bool cacheable = allDataModel?.Battles == 0;
+        var saved = cacheable ? HistoryCache.Read<BattleCheckpoint>(cacheFile) : null;
+        if (saved?.Files == null || saved.Model == null || saved.Cards == null || saved.Maps == null || saved.Shops == null || saved.Seen == null) saved = null;
+        var additions = saved == null ? null : HistoryCache.Additions(saved.Files, files);
+        bool restored = saved != null && additions != null;
+        double lastTime = restored ? saved!.LastTime : double.MinValue;
+        cards.Clear(); maps.Clear(); shops.Clear();
+        void Restore()
+        {
+            allDataModel!.RestoreState(saved!.Model);
+            foreach (var pair in saved.Cards) cards[pair.Key] = pair.Value;
+            foreach (var pair in saved.Maps) maps[pair.Key] = pair.Value;
+            foreach (var pair in saved.Shops) shops[pair.Key] = pair.Value;
+            seen.UnionWith(saved.Seen); archived = saved.Archived;
+        }
+        if (restored) Restore(); else archived = 0;
+        var battleFiles = (restored ? additions! : files).Select(f => f.Path);
         var ordered = new List<(string File, double Time)>();
         foreach (var path in battleFiles)
         {
             ct.ThrowIfCancellationRequested(); var stored = J.Read(path); var b = stored.At("authoritativeBattle") ?? stored;
             string key = b.At("commandId").S(b.At("time").S()) + ":" + b.At("before", "id").S();
             if (b.At("before") == null || b.At("result") == null || !seen.Add(key)) continue;
-            Observe(b.At("before")); ordered.Add((path, b.At("time").N()));
+            double time = b.At("time").N();
+            // A backfilled older battle changes chronological smoothing. Rebuild
+            // rather than silently applying it after a newer checkpoint.
+            if (restored && time < lastTime)
+            {
+                allDataModel!.RestoreState(new([], new(), [], 0, .18));
+                HistoryCache.Write(cacheFile, new { invalidated = true });
+                EnsureLoaded(allDataModel, ct); return;
+            }
+            Observe(b.At("before")); ordered.Add((path, time));
         }
-        archived = ordered.Count;
+        archived += ordered.Count;
         if (allDataModel != null)
             foreach (var (file, _) in ordered.OrderBy(x => x.Time))
             {
                 ct.ThrowIfCancellationRequested(); var stored = J.Read(file); var b = stored.At("authoritativeBattle") ?? stored;
                 allDataModel.Learn(new JsonObject { ["lastBattle"] = b?.DeepClone() }, false);
             }
+        if (cacheable && (!restored || ordered.Count > 0 || additions!.Length > 0))
+        {
+            ct.ThrowIfCancellationRequested();
+            HistoryCache.Write(cacheFile, new BattleCheckpoint(files, allDataModel!.CaptureState(), cards, maps, shops,
+                seen.ToArray(), archived, Math.Max(lastTime, ordered.Select(x => x.Time).DefaultIfEmpty(double.MinValue).Max())));
+        }
         var corpus = Path.Combine(root, "decisions");
         decisions = confirmed = 0; calibration.Clear(); episodes.Clear(); finishedEpisodes.Clear();
-        if (Directory.Exists(corpus))
-            foreach (var file in Directory.GetFiles(corpus, "*.json"))
+        string indexFile = Path.Combine(root, "cache", "decision-index-v1.json");
+        var index = HistoryCache.Read<DecisionCheckpoint>(indexFile);
+        var indexed = index?.Rows.ToDictionary(r => r.File.Path, StringComparer.OrdinalIgnoreCase) ?? new();
+        decisionIndex.Clear();
+        foreach (var file in HistoryCache.Scan(corpus))
             {
                 ct.ThrowIfCancellationRequested();
-                var row = Read(file); if (row == null) continue; decisions++;
+                DecisionInfo? row = null;
+                if (indexed.TryGetValue(file.Path, out var old) && old.File == file) row = old.Info;
+                else { try { row = J.ReadAs<DecisionInfo>(file.Path); } catch (Exception e) when (e is IOException or JsonException) { } }
+                decisionIndex[file.Path] = new(file, row);
+                if (row == null) continue; decisions++;
                 if (row.EpisodeId != "")
                 {
                     if (row.RunId != "") episodes[row.RunId] = row.EpisodeId;
                     if (row.NextRunId != "") episodes[row.NextRunId] = row.EpisodeId;
                     if (row.Return != null) finishedEpisodes.Add(row.EpisodeId);
                 }
-                if (row.Confirmed) { confirmed++; Calibrate(row); }
+                if (row.Confirmed) { confirmed++; Calibrate(row.CalibrationKey, row.PredictedWin, row.Won); }
                 // Interrupted/unconfirmed commands remain excluded. They are never replayed.
             }
+        ct.ThrowIfCancellationRequested();
+        HistoryCache.Write(indexFile, new DecisionCheckpoint(decisionIndex.Values.ToArray()));
         loaded = true; RefreshStatus();
     }
     internal void PrepareSearch()
@@ -159,9 +220,19 @@ sealed class SearchMemory
     }
     void Calibrate(LearningDecision row)
     {
-        if (row.PredictedWin is not { } predicted || row.Won is not { } won || row.CalibrationKey == "") return;
-        var old = calibration.GetValueOrDefault(row.CalibrationKey);
-        calibration[row.CalibrationKey] = (old.Count + 1, old.Predicted + predicted, old.Actual + (won ? 1 : 0));
+        Calibrate(row.CalibrationKey, row.PredictedWin, row.Won);
+    }
+    void Calibrate(string key, double? prediction, bool? outcome)
+    {
+        if (prediction is not { } predicted || outcome is not { } won || key == "") return;
+        var old = calibration.GetValueOrDefault(key);
+        calibration[key] = (old.Count + 1, old.Predicted + predicted, old.Actual + (won ? 1 : 0));
+    }
+    void Track(string path, LearningDecision row)
+    {
+        decisionIndex[path] = new(HistoryCache.StampFor(path), new DecisionInfo
+        { Id = row.Id, RunId = row.RunId, EpisodeId = row.EpisodeId, NextRunId = row.NextRunId,
+            Confirmed = row.Confirmed, Return = row.Return, PredictedWin = row.PredictedWin, Won = row.Won, CalibrationKey = row.CalibrationKey });
     }
     internal double CalibrateWin(JsonNode s, Forecast f)
     {
@@ -191,12 +262,12 @@ sealed class SearchMemory
         if (row.Chosen < 0) throw new InvalidOperationException("记录操作不在已比较的候选中。");
         int visits = choices.Sum(c => c.Search?.Visits ?? 0);
         if (visits > 0) row.Policy = choices.Select(c => (c.Search?.Visits ?? 0) / (double)visits).ToArray();
-        J.Write(FileFor(row.Id), row); pending[row.Id] = row; decisions++; RefreshStatus(); return row.Id;
+        J.Write(FileFor(row.Id), row); Track(FileFor(row.Id), row); pending[row.Id] = row; decisions++; RefreshStatus(); return row.Id;
     }
     string FileFor(string id) => Path.Combine(root, "decisions", id + ".json");
     static LearningDecision? Read(string file)
     {
-        try { return JsonSerializer.Deserialize<LearningDecision>(File.ReadAllText(file), J.Options); } catch (Exception e) when (e is IOException or JsonException) { return null; }
+        try { return J.ReadAs<LearningDecision>(file); } catch (Exception e) when (e is IOException or JsonException) { return null; }
     }
     internal void Confirm(string id, JsonNode? after, JsonNode? receipt = null)
     {
@@ -208,23 +279,23 @@ sealed class SearchMemory
         if (row.Method is "sima.fight" or "sima.open" && after.At("lastBattle", "before", "id").S() == row.RunId
             && after.At("lastBattle", "time").S() != row.Before.At("lastBattle", "time").S()
             && after.At("lastBattle", "result", "win") is JsonValue result && result.TryGetValue<bool>(out var won)) row.Won = won;
-        Calibrate(row); J.Write(FileFor(id), row); confirmed++; Observe(after.At("sima", "run")); RefreshStatus();
+        Calibrate(row); J.Write(FileFor(id), row); Track(FileFor(id), row); confirmed++; Observe(after.At("sima", "run")); RefreshStatus();
     }
     internal void Abort(string id, string outcome)
     {
         if (!pending.Remove(id, out var row)) return;
-        row.Outcome = outcome; J.Write(FileFor(id), row); RefreshStatus();
+        row.Outcome = outcome; J.Write(FileFor(id), row); Track(FileFor(id), row); RefreshStatus();
     }
     internal void FinishRun(string runId, double depth, Settings cfg)
     {
         if (!episodes.TryGetValue(runId, out var episode)) return;
         var dir = Path.Combine(root, "decisions"); if (!Directory.Exists(dir)) return;
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in decisionIndex.Values.Where(r => r.Info is { Confirmed: true, Return: null } info && info.EpisodeId == episode).Select(r => r.File.Path).ToArray())
         {
             var row = Read(file); if (row == null || !row.Confirmed || row.EpisodeId != episode || row.Return != null) continue;
             row.FinalDepth = depth;
             row.Return = .5 + .45 * Math.Tanh((depth - row.Depth - (row.Won == false ? 1 : 0)) / 8);
-            J.Write(file, row);
+            J.Write(file, row); Track(file, row);
         }
         finishedEpisodes.Add(episode); RefreshStatus();
         if (cfg.Search.AutoTrain) Neural.ScheduleTraining(cfg.Search.TrainingEpochs, cfg.Seed, cfg.Search.TrainingDevice);

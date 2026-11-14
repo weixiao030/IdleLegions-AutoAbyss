@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
+using System.Text.Json;
 
 namespace FrostAbyss;
 
@@ -74,9 +75,12 @@ sealed class SearchPlanner
         int workers = Math.Min(cfg.Search.Workers, budget);
         var roots = new Node[workers]; var depths = new int[workers]; var counts = new int[workers];
         // Prepared before parallel work: no shared lazy JsonNode reads in workers.
-        var states = Enumerable.Range(0, workers).Select(_ => snapshot.DeepClone()).ToArray();
+        var slim = SearchMemory.Slim(snapshot);
+        var states = Enumerable.Range(0, workers).Select(_ => slim.DeepClone()).ToArray();
+        var settingsJson = JsonSerializer.Serialize(cfg, J.Options);
+        var workerSettings = Enumerable.Range(0, workers).Select(_ => JsonSerializer.Deserialize<Settings>(settingsJson, J.Options)!).ToArray();
         var offers = Enumerable.Range(0, workers).Select(_ => choices.Select(Copy).ToArray()).ToArray();
-        var priors = choices.Select(c => cfg.StrategyId == 7 ? neural.Policy(PlannerFeatures.Extract(snapshot, c, cfg)) : 0).ToArray();
+        var priors = choices.Select(c => cfg.StrategyId == 7 && neural.Ready ? neural.Policy(PlannerFeatures.Extract(snapshot, c, cfg)) : 0).ToArray();
         double max = priors.DefaultIfEmpty().Max();
         priors = priors.Select(v => Math.Exp(Math.Clamp(v - max, -30, 0))).ToArray();
         double sum = priors.Sum(); for (int i=0;i<priors.Length;i++) priors[i] /= Math.Max(1e-12, sum);
@@ -89,7 +93,7 @@ sealed class SearchPlanner
             for (int iteration=0;iteration<iterations;iteration++)
             {
                 ct.ThrowIfCancellationRequested();
-                var world = new SearchWorld(states[worker].DeepClone(), cfg, simulation, memory, rng, ct);
+                var world = new SearchWorld(states[worker].DeepClone(), cfg, simulation, memory, rng, ct, workerSettings[worker]);
                 Node node = root; var path = new List<(Node, Edge)>(); bool rollout = false;
                 for (int step=0;step<cfg.Search.Horizon && !world.Terminal;step++)
                 {
@@ -103,7 +107,7 @@ sealed class SearchPlanner
                         string key = Key(action);
                         if (!node.Edges.TryGetValue(key, out var edge))
                         {
-                            double prior = cfg.StrategyId == 7 ? Math.Exp(Math.Clamp(neural.Policy(PlannerFeatures.Extract(world.Snapshot, action, cfg)), -12, 12)) : 1;
+                            double prior = cfg.StrategyId == 7 && neural.Ready ? Math.Exp(Math.Clamp(neural.Policy(PlannerFeatures.Extract(world.Snapshot, action, cfg)), -12, 12)) : 1;
                             node.Edges[key] = edge = new(action, prior); counts[worker]++;
                         }
                         legal.Add(edge);

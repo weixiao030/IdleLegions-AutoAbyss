@@ -19,11 +19,11 @@ sealed class SearchWorld
     bool failed;
     internal bool Terminal { get; private set; }
     JsonNode Run => Snapshot.At("sima", "run")!;
-    internal SearchWorld(JsonNode snapshot, Settings config, Simulation simulation, SearchMemory memory, Random rng, CancellationToken ct)
+    internal SearchWorld(JsonNode snapshot, Settings config, Simulation simulation, SearchMemory memory, Random rng, CancellationToken ct, Settings? workerSettings = null)
     {
         Snapshot = snapshot; cfg = config; this.simulation = simulation; this.memory = memory; this.rng = rng; this.ct = ct;
         initialDepth = Run.At("profundidad").N();
-        single = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(config, J.Options), J.Options)!;
+        single = workerSettings ?? JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(config, J.Options), J.Options)!;
         single.Simulations = config.StrategyId >= 6 ? 8 : 1;
     }
     internal double Value
